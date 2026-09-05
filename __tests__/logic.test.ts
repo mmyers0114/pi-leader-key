@@ -532,6 +532,51 @@ section("Config loading");
   );
   assert("x" in r3.config.bindings, "partial config bindings preserved");
 
+  // Test: wrong-typed fields => rejected to defaults (hand-edited config is
+  // an untyped text file; garbage must not reach setTimeout/registerShortcut)
+  writeFileSync(
+    CONFIG_PATH,
+    JSON.stringify({
+      leaderKey: 123,
+      leaderTimeoutMs: true,
+      sequenceTimeoutMs: "750",
+    }),
+  );
+  const rType = loadConfig(CONFIG_PATH);
+  assertEq(
+    rType.config.leaderKey,
+    DEFAULT_CONFIG.leaderKey,
+    "non-string leaderKey => default",
+  );
+  assertEq(
+    rType.config.leaderTimeoutMs,
+    DEFAULT_CONFIG.leaderTimeoutMs,
+    "non-number leaderTimeoutMs => default",
+  );
+  assertEq(
+    rType.config.sequenceTimeoutMs,
+    DEFAULT_CONFIG.sequenceTimeoutMs,
+    "non-number sequenceTimeoutMs => default",
+  );
+
+  // Test: non-positive timeouts => rejected to defaults (setTimeout with
+  // <= 0 / NaN collapses to ~1ms, which reads as "leader key is broken")
+  writeFileSync(
+    CONFIG_PATH,
+    JSON.stringify({ leaderTimeoutMs: -5, sequenceTimeoutMs: 0 }),
+  );
+  const rNeg = loadConfig(CONFIG_PATH);
+  assertEq(
+    rNeg.config.leaderTimeoutMs,
+    DEFAULT_CONFIG.leaderTimeoutMs,
+    "negative leaderTimeoutMs => default",
+  );
+  assertEq(
+    rNeg.config.sequenceTimeoutMs,
+    DEFAULT_CONFIG.sequenceTimeoutMs,
+    "zero sequenceTimeoutMs => default",
+  );
+
   // Test: invalid JSON => defaults + "parse" error (surfaces on shortcut press)
   writeFileSync(CONFIG_PATH, "not valid json {{{");
   const rParse = loadConfig(CONFIG_PATH);

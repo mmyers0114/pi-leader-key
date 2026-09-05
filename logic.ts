@@ -57,10 +57,19 @@ export function loadConfig(path: string = CONFIG_PATH): ConfigResult {
   const parsed = JSON.parse(readFileSync(path, "utf-8"));
   return {
    config: {
-    leaderKey: parsed.leaderKey ?? DEFAULT_CONFIG.leaderKey,
-    leaderTimeoutMs: parsed.leaderTimeoutMs ?? DEFAULT_CONFIG.leaderTimeoutMs,
+    leaderKey:
+     typeof parsed.leaderKey === "string"
+      ? parsed.leaderKey
+      : DEFAULT_CONFIG.leaderKey,
+    leaderTimeoutMs:
+     typeof parsed.leaderTimeoutMs === "number" && parsed.leaderTimeoutMs > 0
+      ? parsed.leaderTimeoutMs
+      : DEFAULT_CONFIG.leaderTimeoutMs,
     sequenceTimeoutMs:
-     parsed.sequenceTimeoutMs ?? DEFAULT_CONFIG.sequenceTimeoutMs,
+     typeof parsed.sequenceTimeoutMs === "number" &&
+     parsed.sequenceTimeoutMs > 0
+      ? parsed.sequenceTimeoutMs
+      : DEFAULT_CONFIG.sequenceTimeoutMs,
     // Configs from the spinner era may still carry editorEffect: "spinner";
     // anything that isn't "none" falls back to the default (grayedOut).
     editorEffect:
