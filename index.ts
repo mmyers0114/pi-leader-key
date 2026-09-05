@@ -774,7 +774,7 @@ export default function (pi: ExtensionAPI) {
                     if (step === "command") {
                         if (
                             matchesKey(data, Key.enter) &&
-                            query.startsWith("/")
+                            query.trim().length > 1
                         ) {
                             commandValue = query.trim();
                             goSequence();
