@@ -42,6 +42,13 @@ On first startup a blank config is written to `~/.pi/agent/leader-key.json`. Edi
 | Type | Example | What it does |
 | ------ | --------- | -------------- |
 | `command` | `{ "command": "/model" }` | Runs a slash command through pi's full editor pipeline |
+| `command` + args | `{ "command": "/model opus" }` | Same, with arguments |
+
+Command arguments: the binding string is passed verbatim through pi's editor
+submit pipeline, the same handler a manual Enter press triggers, so any
+arguments you include are parsed exactly as if you had typed them. This is
+**largely untested** — it was verified from pi's source and one manual check
+(`/model <name>`); other commands are expected to work but not exercised. |
 | `action` | `{ "action": "compact" }` | `compact`, `shutdown`, or `clearEditor` |
 | `exec` | `{ "exec": "git status" }` | Runs via `bash -c`; output shown as a notification |
 

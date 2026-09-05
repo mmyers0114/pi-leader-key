@@ -38,7 +38,7 @@ An empty `bindings` object is the shipped state: pressing the leader key warns "
 
 Each binding is exactly one of:
 
-- **`command`** — a slash command, routed through pi's full editor pipeline. Anything starting with `/`.
+- **`command`** — a slash command, routed through pi's full editor pipeline. Anything starting with `/`. Arguments work: the string is passed verbatim to pi's submit handler, so `{ "command": "/model opus" }` behaves exactly like typing it. Largely untested beyond one manual `/model <name>` check.
 - **`action`** — direct API call: `"compact"` (trigger conversation compaction), `"shutdown"` (graceful shutdown), `"clearEditor"` (clear the editor text).
 - **`exec`** — shell command run via `bash -c`; output is shown as a notification.
 
