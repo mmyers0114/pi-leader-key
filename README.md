@@ -64,8 +64,19 @@ at invocation time, so newly installed packages appear automatically.
 - Entries show provenance (`extension`, `prompt`, or `skill`) and description.
 - Selecting an entry echoes the exact invokable string (`/om:view`,
   `/review:1`, …) to paste into `bindings` without typos; escape cancels.
+- **+ Add binding** — the first entry opens the `/leader-bind` wizard.
 
 In non-TUI mode the list is shown as a plain notification instead.
+
+## Creating bindings interactively: `/leader-bind`
+
+`/leader-bind` walks you through creating a binding: pick a type (command /
+action / exec), enter the value (command picker with fuzzy filter, or free
+text), choose a key sequence, and confirm. It validates the sequence, warns
+about conflicts with existing bindings (exact or prefix overlaps) and requires
+explicit confirmation before overwriting, then writes the merged config to
+`~/.pi/agent/leader-key.json`. The new binding works immediately — no reload.
+Escape walks back a step; cancel writes nothing.
 
 ## Development
 

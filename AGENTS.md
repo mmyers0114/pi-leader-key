@@ -42,6 +42,8 @@ Each binding is exactly one of:
 - **`action`** — direct API call: `"compact"` (trigger conversation compaction), `"shutdown"` (graceful shutdown), `"clearEditor"` (clear the editor text).
 - **`exec`** — shell command run via `bash -c`; output is shown as a notification.
 
+Wizard specifics (`/leader-bind`): sequences are validated (printable ASCII, no whitespace); conflicts with existing bindings — exact or prefix overlaps — require explicit overwrite confirmation; a corrupt config file is never overwritten (save refuses and reports); the save preserves all other bindings and non-binding fields.
+
 ### Sequences
 
 Keys are printable ASCII: a single key (`"c"`) or multi-key (`"gs"`). Escape cancels leader mode; non-printable keys during leader mode are ignored.
@@ -50,7 +52,13 @@ A sequence that is also a prefix of another binding waits `sequenceTimeoutMs` fo
 
 ## Adding bindings
 
-Discover available slash commands from the environment at runtime rather than trusting any cached list:
+Run `/leader-bind` for an interactive wizard: type → value → key sequence →
+conflict check → save. It writes the merged config and the binding works
+immediately. Escape backs out a step; cancel writes nothing.
+
+Alternatively, edit `~/.pi/agent/leader-key.json` by hand. Discover available
+slash commands from the environment at runtime rather than trusting any cached
+list:
 
 1. `/leader-commands` — picker over `pi.getCommands()` (extension commands, prompt templates, skills), generated at invocation time; type-to-filter fuzzy-matches names and descriptions; selecting one echoes the exact invokable string to paste into `bindings`
 2. `pi package list` — installed packages

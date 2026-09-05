@@ -29,6 +29,11 @@ import {
   loadConfig,
   processKey,
   type BindingAction,
+  type LeaderConfig,
+  findConflicts,
+  mergeBinding,
+  saveBinding,
+  validateSequence,
   type PiCommand,
 } from "../logic.ts";
 
@@ -610,9 +615,169 @@ const ENSURE_PATH = join(CONFIG_DIR, "ensure-leader-key.json");
   rmSync(ENSURE_PATH);
 }
 
+{
+  // ---------------------------------------------------------------------------
+  // validateSequence (binding wizard)
+  // ---------------------------------------------------------------------------
+
+  section("validateSequence");
+
+  assertEq(validateSequence(""), "empty", "empty string rejected");
+  assertEq(validateSequence("   "), "empty", "whitespace-only rejected");
+  assertEq(validateSequence(" gs "), null, "surrounding whitespace trimmed");
+  assert(validateSequence("g s") !== null, "internal whitespace rejected");
+  assert(validateSequence("gsé") !== null, "non-ASCII rejected");
+  assertEq(validateSequence("gs\t"), null, "trailing tab trimmed away");
+  assertEq(validateSequence("\t"), "empty", "tab-only rejected");
+  assertEq(validateSequence("gs"), null, "valid multi-key accepted");
+  assertEq(validateSequence("c"), null, "valid single key accepted");
+
+  // ---------------------------------------------------------------------------
+  // findConflicts (binding wizard)
+  // ---------------------------------------------------------------------------
+
+  section("findConflicts");
+
+  const conflictBindings: Record<string, BindingAction> = {
+    c: { action: "compact" },
+    gs: { exec: "git status" },
+  };
+
+  assertEq(
+    findConflicts(conflictBindings, "gs"),
+    ["gs"],
+    "exact match detected",
+  );
+  assertEq(
+    findConflicts(conflictBindings, "g"),
+    ["gs"],
+    "new sequence is proper prefix of existing",
+  );
+  assertEq(
+    findConflicts(conflictBindings, "gst"),
+    ["gs"],
+    "existing key is proper prefix of new sequence",
+  );
+  assertEq(
+    findConflicts(conflictBindings, "gd"),
+    [],
+    "unrelated sequence clean",
+  );
+  assertEq(findConflicts({}, "gs"), [], "empty bindings clean");
+
+  // ---------------------------------------------------------------------------
+  // mergeBinding (binding wizard)
+  // ---------------------------------------------------------------------------
+
+  section("mergeBinding");
+
+  const baseConfig: LeaderConfig = {
+    ...DEFAULT_CONFIG,
+    bindings: { c: { action: "compact" }, gs: { exec: "git status" } },
+  };
+
+  const merged = mergeBinding(baseConfig, "gd", { exec: "git diff" });
+  assertEq(Object.keys(merged.bindings).length, 3, "merge adds a binding");
+  assertEq(merged.bindings.gd, { exec: "git diff" }, "new binding present");
+  assertEq(
+    merged.bindings.c,
+    { action: "compact" },
+    "existing binding preserved",
+  );
+  assertEq(baseConfig.bindings.gd, undefined, "input config not mutated (add)");
+  assertEq(
+    merged.leaderKey,
+    baseConfig.leaderKey,
+    "non-binding fields preserved",
+  );
+
+  const replaced = mergeBinding(baseConfig, "gs", { command: "/status" });
+  assertEq(
+    Object.keys(replaced.bindings).length,
+    2,
+    "merge replaces, does not duplicate",
+  );
+  assertEq(
+    replaced.bindings.gs,
+    { command: "/status" },
+    "replaced value present",
+  );
+  assertEq(
+    baseConfig.bindings.gs,
+    { exec: "git status" },
+    "input config not mutated (replace)",
+  );
+  assertEq(
+    Object.keys(replaced.bindings)[0],
+    "c",
+    "replaced key keeps its original position",
+  );
+} // end temp-scope bindings
+
 // ---------------------------------------------------------------------------
-// Results
+// saveBinding (binding wizard — config persistence)
 // ---------------------------------------------------------------------------
+
+section("saveBinding");
+
+{
+  const SAVE_PATH = join(CONFIG_DIR, "save-binding.json");
+  if (existsSync(SAVE_PATH)) unlinkSync(SAVE_PATH);
+
+  // Missing file: create it with the new binding over defaults
+  const r1 = saveBinding("gh", { exec: "git log" }, SAVE_PATH);
+  assertEq(r1.ok, true, "save to missing file succeeds");
+  assertEq(
+    loadConfig(SAVE_PATH).config.bindings.gh,
+    { exec: "git log" },
+    "missing-file save writes the binding",
+  );
+
+  // Existing file: merge, preserve everything else
+  writeFileSync(
+    SAVE_PATH,
+    JSON.stringify({
+      leaderKey: "ctrl+\\",
+      bindings: { c: { action: "compact" }, gs: { exec: "git status" } },
+    }),
+  );
+  const r2 = saveBinding("gd", { exec: "git diff" }, SAVE_PATH);
+  assertEq(r2.ok, true, "save to existing file succeeds");
+  const reloaded = loadConfig(SAVE_PATH).config;
+  assertEq(reloaded.bindings.gd, { exec: "git diff" }, "new binding persisted");
+  assertEq(
+    reloaded.bindings.gs,
+    { exec: "git status" },
+    "prior bindings intact",
+  );
+  assertEq(reloaded.leaderKey, "ctrl+\\", "non-binding fields intact");
+
+  // Overwrite an existing sequence
+  const r3 = saveBinding("gs", { command: "/branch" }, SAVE_PATH);
+  assertEq(r3.ok, true, "overwrite succeeds");
+  assertEq(
+    loadConfig(SAVE_PATH).config.bindings.gs,
+    { command: "/branch" },
+    "overwritten binding persisted",
+  );
+
+  // Corrupt file: refuse to write, leave it byte-identical
+  const corrupt = "{ not json";
+  writeFileSync(SAVE_PATH, corrupt);
+  const r4 = saveBinding("gx", { exec: "x" }, SAVE_PATH);
+  assertEq(r4.ok, false, "corrupt config refuses to save");
+  assertEq(readFileSync(SAVE_PATH, "utf-8"), corrupt, "corrupt file untouched");
+
+  // Unwritable path: reports failure, nothing thrown
+  const r5 = saveBinding(
+    "gx",
+    { exec: "x" },
+    join(CONFIG_DIR, "no", "such", "dir.json"),
+  );
+  assertEq(r5.ok, false, "unwritable path reports failure");
+
+  unlinkSync(SAVE_PATH);
+}
 
 rmSync(CONFIG_DIR, { recursive: true, force: true });
 

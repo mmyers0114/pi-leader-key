@@ -194,3 +194,85 @@ export function processKey(
  if (!exact && isPrefixOfAnother) return { action: "wait", exact: false };
  return { action: "dismiss" };
 }
+
+// ---------------------------------------------------------------------------
+// Binding wizard — sequence validation, conflict detection, merging
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate a sequence typed in the binding wizard. Returns an error code
+ * ("empty" | "whitespace" | "non-printable") or null when valid.
+ */
+export function validateSequence(raw: string): string | null {
+ const seq = raw.trim();
+ if (seq.length === 0) return "empty";
+ if (/\s/.test(seq)) return "whitespace";
+ for (const ch of seq) {
+  if (!isPrintableKey(ch)) return "non-printable";
+ }
+ return null;
+}
+
+/**
+ * Keys that collide with `seq` under the runtime matching rules: an exact
+ * match, or a proper-prefix relation in either direction (a new prefix
+ * would force an existing binding behind a timeout, and vice versa).
+ */
+export function findConflicts(
+ bindings: Record<string, BindingAction>,
+ seq: string,
+): string[] {
+ const conflicts: string[] = [];
+ for (const key of Object.keys(bindings)) {
+  if (key === seq || isProperPrefix(seq, key) || isProperPrefix(key, seq)) {
+   conflicts.push(key);
+  }
+ }
+ return conflicts;
+}
+
+/**
+ * Return a NEW config with `bindings[seq]` set to `binding` — input is
+ * never mutated. Replacing an existing key keeps its position; other keys
+ * and all non-binding fields are preserved.
+ */
+export function mergeBinding(
+ config: LeaderConfig,
+ seq: string,
+ binding: BindingAction,
+): LeaderConfig {
+ return { ...config, bindings: { ...config.bindings, [seq]: binding } };
+}
+
+// ---------------------------------------------------------------------------
+// Config persistence (binding wizard)
+// ---------------------------------------------------------------------------
+
+export type SaveResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Merge one binding into the config file on disk: read → merge → write.
+ * A corrupt or unreadable existing file is never overwritten (a failed
+ * write must not lose user config); the result object carries the error
+ * so the caller decides how to surface it.
+ */
+export function saveBinding(
+ seq: string,
+ binding: BindingAction,
+ path: string = CONFIG_PATH,
+): SaveResult {
+ const loaded = loadConfig(path);
+ if (loaded.error === "parse") {
+  return {
+   ok: false,
+   error: "config file is not valid JSON — fix or remove it first",
+  };
+ }
+ const merged = mergeBinding(loaded.config, seq, binding);
+ try {
+  writeFileSync(path, JSON.stringify(merged, null, 2) + "\n");
+  return { ok: true };
+ } catch (err) {
+  return { ok: false, error: err instanceof Error ? err.message : String(err) };
+ }
+}
