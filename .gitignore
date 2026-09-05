@@ -1,0 +1,5 @@
+.scratch/
+.pi/
+leader-key.json
+node_modules/
+*.tgz

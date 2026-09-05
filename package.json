@@ -1,0 +1,29 @@
+{
+    "name": "pi-leader-key",
+    "version": "1.0.0",
+    "description": "Vim-style leader key shortcuts for pi — tap a key sequence to run commands, actions, or shell one-liners.",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/mmyers0114/pi-leader-key.git"
+    },
+    "keywords": [
+        "pi-package"
+    ],
+    "type": "module",
+    "files": [
+        "index.ts",
+        "logic.ts",
+        "CHANGELOG.md",
+        "AGENTS.md"
+    ],
+    "pi": {
+        "extensions": [
+            "index.ts"
+        ]
+    },
+    "peerDependencies": {
+        "@earendil-works/pi-coding-agent": "*",
+        "@earendil-works/pi-tui": "*"
+    }
+}
