@@ -14,6 +14,7 @@
     "files": [
         "index.ts",
         "logic.ts",
+        "wizard.ts",
         "CHANGELOG.md",
         "AGENTS.md"
     ],
