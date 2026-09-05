@@ -11,6 +11,9 @@
         "pi-package"
     ],
     "type": "module",
+    "scripts": {
+        "test": "tsx --test __tests__/logic.test.ts"
+    },
     "files": [
         "index.ts",
         "logic.ts",
@@ -26,5 +29,8 @@
     "peerDependencies": {
         "@earendil-works/pi-coding-agent": "*",
         "@earendil-works/pi-tui": "*"
+    },
+    "devDependencies": {
+        "tsx": "^4.23.13"
     }
 }

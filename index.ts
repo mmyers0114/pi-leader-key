@@ -262,10 +262,13 @@ export default function (pi: ExtensionAPI) {
             const r = await pi.exec("bash", ["-c", binding.exec], {
                 timeout: 15000,
             });
+            // Cap what reaches the TUI — `cat huge.log` shouldn't flood it.
+            const cap = (s: string) =>
+                s.length > 2000 ? `${s.slice(0, 2000)}\n…[truncated]` : s;
             ctx.ui.notify(
                 r.code !== 0 && r.stderr
-                    ? `[exit ${r.code}] ${r.stderr.trim()}`
-                    : r.stdout.trim() || `[exit ${r.code}]`,
+                    ? `[exit ${r.code}] ${cap(r.stderr.trim())}`
+                    : cap(r.stdout.trim()) || `[exit ${r.code}]`,
                 "info",
             );
         }
