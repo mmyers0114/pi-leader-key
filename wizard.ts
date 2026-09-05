@@ -2,10 +2,10 @@
 // fuzzy-filter command picker. UI only; pure logic lives in logic.ts.
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
 import {
     Container,
-    DynamicBorder,
     Editor,
     fuzzyFilter,
     Key,

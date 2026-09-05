@@ -72,3 +72,4 @@ Test command and dev-install workflow: README, "Development". Facts the README d
 
 - Config bootstrap (`ensureConfig()` in logic.ts, runs at extension load): missing file → writes defaults; existing file (even an invalid one) → never touched; write failure → in-memory defaults, extension keeps working.
 - Keep `logic.ts` free of pi imports — the test suite loads it standalone under tsx, where `@earendil-works/pi-*` don't resolve. The peers are declared in `package.json` and resolved by pi at runtime.
+- TUI components split across the peers: containers/widgets (`Container`, `Text`, `SelectList`, `Editor`, `fuzzyFilter`, …) come from `@earendil-works/pi-tui`; chrome (`DynamicBorder`, `CustomEditor`) comes from `@earendil-works/pi-coding-agent`. The LSP cannot resolve the peers, so a wrong-package import looks clean — verify exports with `node --input-type=module -e "console.log(typeof (await import('PKG')).NAME)"`.
