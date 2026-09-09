@@ -74,6 +74,7 @@ import {
     isPrintableKey,
     loadConfig,
     processKey,
+    shouldRestoreDraft,
     type EditorEffect,
     type LeaderConfig,
 } from "./logic.ts";
@@ -232,9 +233,13 @@ export default function (pi: ExtensionAPI) {
         if (!binding) return;
 
         if ("command" in binding) {
+            const draft = leaderEditor?.getText() ?? "";
             leaderEditor?.setText(binding.command);
             await leaderEditor?.onSubmit?.(binding.command);
-            ctx.ui.setEditorText("");
+            // Give the draft back unless the command left new text behind.
+            if (shouldRestoreDraft(ctx.ui.getEditorText(), binding.command)) {
+                ctx.ui.setEditorText(draft);
+            }
             return;
         }
 
