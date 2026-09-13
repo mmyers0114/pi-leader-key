@@ -66,7 +66,12 @@ import {
     type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
-import { Container, matchesKey, Text } from "@earendil-works/pi-tui";
+import {
+    Container,
+    matchesKey,
+    Text,
+    type KeyId,
+} from "@earendil-works/pi-tui";
 import {
     buildCommandMenu,
     CONFIG_PATH,
@@ -262,6 +267,12 @@ export default function (pi: ExtensionAPI) {
                 case "clearEditor":
                     ctx.ui.setEditorText("");
                     break;
+                default:
+                    ctx.ui.notify(
+                        `Unknown action for "${key}" — check leader-key.json.`,
+                        "warning",
+                    );
+                    break;
             }
         } else if ("exec" in binding) {
             const r = await pi.exec("bash", ["-c", binding.exec], {
@@ -402,7 +413,7 @@ export default function (pi: ExtensionAPI) {
     // Shortcut
     // ------------------------------------------------------------------
 
-    pi.registerShortcut(config.leaderKey, {
+    pi.registerShortcut(config.leaderKey as KeyId, {
         description: "Leader key",
         handler: async (ctx) => {
             if (ctx.mode !== "tui") return;
