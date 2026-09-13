@@ -21,6 +21,8 @@ This extension fills that gap: one leader key gives you an unlimited namespace o
 
 ```bash
 pi install npm:pi-leader-key
+# or straight from git (same release, useful while npm lags):
+pi install git:github.com/mmyers0114/pi-leader-key@v1.2.0
 ```
 
 On first startup a blank config is written to `~/.pi/agent/leader-key.json` (outside the package directory, so it survives updates). Add bindings by hand or run `/leader-bind`.
