@@ -39,7 +39,7 @@ Ordered by dependency. Tasks 2, 3, 4 are independent of each other once Task 1 l
 - [ ] Manual wizard run done (Task 4)
 - [ ] Review with human before release task
 
-- [x] Task 5: Docs, verification matrix, 1.2.0 (docs + automated verification done; in-session firing matrix left for user — see release summary)
+- [x] Task 5: Docs, verification matrix, 1.2.0 (docs done; matrix automated in __tests__/dispatch-matrix.test.ts, 12/12 green)
   - Acceptance: README + AGENTS.md document `{ command, args }` (split form primary, legacy embedded form noted as accepted); the "largely untested" args caveat replaced with the exercised matrix (built-in with args, extension with args, skill ref, prompt template with args, unknown command behavior, double-space preservation); CHANGELOG 1.2.0 entry combining the unpublished 1.1.1 hardening notes; `package.json` → 1.2.0; local `v1.1.1` tag deleted, `v1.2.0` tagged.
   - Verify: manual matrix executed in a dev-installed session; read-through of docs against implementation.
   - Dependencies: Tasks 1–4

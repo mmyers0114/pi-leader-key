@@ -105,7 +105,7 @@ Invalid values fall back to defaults, and malformed binding entries are ignored 
 | `exec` | `{ "exec": "git status" }` | Runs via `bash -c` (15s timeout); output shown as a notification, capped at 2KB |
 
 > [!NOTE]
-> `command` + `args` dispatches the composed string (`command + " " + args`) through the same handler a manual Enter press triggers. Args are opaque: edges trimmed, interior kept verbatim; a legacy `"/model  opus"` (double space) normalizes to `"/model opus"`. Unknown command names pass through untouched — the binding fires against whatever is registered that session, so a command from a removed package simply does nothing until the package is back. Composition, normalization, and draft-restore against the composed string are pinned by unit tests; if a command behaves differently bound than typed, please file an issue.
+> `command` + `args` dispatches the composed string (`command + " " + args`) through the same handler a manual Enter press triggers. Args are opaque: edges trimmed, interior kept verbatim; a legacy `"/model  opus"` (double space) normalizes to `"/model opus"`. Unknown command names pass through untouched — the binding fires against whatever is registered that session, so a command from a removed package simply does nothing until the package is back. Composition, normalization, and draft-restore against the composed string are exercised by the automated dispatch matrix (`npx tsx __tests__/dispatch-matrix.test.ts`: built-in + args, extension + args, skill ref, prompt template + args, unknown-command passthrough, double-space normalization); if a command behaves differently bound than typed, please file an issue.
 
 ### Sequences
 
