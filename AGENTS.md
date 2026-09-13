@@ -8,7 +8,8 @@ Press the leader key (default `ctrl+space`), then tap a short key sequence to tr
 
 ```jsonc
 {
-  // Key combination to activate leader mode (default: "ctrl+space")
+  // Key combination to activate leader mode (default: "ctrl+space").
+  // Restart pi after changing it — the shortcut registers once at startup.
   "leaderKey": "ctrl+space",
 
   // How long leader mode stays active before timing out (default: 3600)
@@ -42,7 +43,7 @@ Each binding is exactly one of:
 - **`action`** — direct API call: `"compact"` (trigger conversation compaction), `"shutdown"` (graceful shutdown), `"clearEditor"` (clear the editor text).
 - **`exec`** — shell command run via `bash -c`; output is shown as a notification.
 
-Wizard specifics (`/leader-bind`): sequences are validated (printable ASCII, no whitespace); conflicts with existing bindings — exact or prefix overlaps — require explicit overwrite confirmation; a corrupt config file is never overwritten (save refuses and reports); the save preserves all other bindings and non-binding fields.
+Wizard specifics (`/leader-bind`): command values must start with `/`; sequences are validated (printable ASCII, no whitespace); conflicts with existing bindings — exact or prefix overlaps — require explicit overwrite confirmation; a corrupt config file is never overwritten (save refuses and reports); the save preserves all other bindings and non-binding fields.
 
 ### Sequences
 

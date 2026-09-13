@@ -29,7 +29,7 @@ On first startup a blank config is written to `~/.pi/agent/leader-key.json`. Edi
 }
 ```
 
-- **leaderKey** — key combination that activates leader mode.
+- **leaderKey** — key combination that activates leader mode (restart pi after changing it).
 - **leaderTimeoutMs** — how long leader mode stays active before timing out.
 - **sequenceTimeoutMs** — max wait between keystrokes in a multi-key sequence.
 - **editorEffect** — `"grayedOut"` dims the editor while leader mode is active
