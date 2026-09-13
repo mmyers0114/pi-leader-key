@@ -16,6 +16,7 @@ import {
 } from "@earendil-works/pi-tui";
 import {
     buildCommandMenu,
+    composeCommand,
     findConflicts,
     isPrintableKey,
     loadConfig,
@@ -154,6 +155,7 @@ export async function runBindingWizard(
         type Step =
             | "type"
             | "command"
+            | "args"
             | "action"
             | "exec"
             | "sequence"
@@ -163,13 +165,17 @@ export async function runBindingWizard(
         let step: Step = "type";
         let bindingType: "command" | "action" | "exec" | null = null;
         let commandValue = "/";
+        let argsValue = "";
         let execValue = "";
         let sequence = "";
         let status = "";
 
         const editor = makeEditor(tui, theme);
         editor.onSubmit = (value) => {
-            if (step === "exec") {
+            if (step === "args") {
+                argsValue = value.trim();
+                goSequence();
+            } else if (step === "exec") {
                 execValue = value.trim();
                 if (!execValue) {
                     status = "enter a shell command";
@@ -201,15 +207,25 @@ export async function runBindingWizard(
             status = "";
             if (step === "command" || step === "action" || step === "exec")
                 step = "type";
+            else if (step === "args") step = "command";
             else if (step === "sequence") step = valueStep();
             else if (step === "conflict" || step === "confirm")
                 step = "sequence";
+            if (step === "args") editor.setText(argsValue);
             refresh();
         };
 
         const valueStep = (): Step => {
-            if (bindingType === "command") return "command";
+            if (bindingType === "command") return "args";
             return bindingType === "action" ? "action" : "exec";
+        };
+
+        const goArgs = (prefill: string) => {
+            step = "args";
+            status = "";
+            argsValue = prefill;
+            editor.setText(prefill);
+            refresh();
         };
 
         const goSequence = () => {
@@ -222,8 +238,10 @@ export async function runBindingWizard(
         let chosenAction: "compact" | "shutdown" | "clearEditor" = "compact";
 
         const makeBinding = (): BindingAction => {
-            if (bindingType === "command")
-                return { command: commandValue.trim() };
+            if (bindingType === "command") {
+                const command = commandValue.trim();
+                return argsValue ? { command, args: argsValue } : { command };
+            }
             if (bindingType === "action") return { action: chosenAction };
             return { exec: execValue };
         };
@@ -245,7 +263,7 @@ export async function runBindingWizard(
         };
 
         const describeBinding = (b: BindingAction): string => {
-            if ("command" in b) return b.command;
+            if ("command" in b) return composeCommand(b);
             if ("exec" in b) return `!${b.exec}`;
             return `action: ${b.action}`;
         };
@@ -286,6 +304,7 @@ export async function runBindingWizard(
             const titles: Record<Step, string> = {
                 type: "New leader binding — what kind?",
                 command: "New leader binding — which command?",
+                args: "New leader binding — args (optional)",
                 action: "New leader binding — which action?",
                 exec: "New leader binding — shell command",
                 sequence: "New leader binding — key sequence",
@@ -447,6 +466,19 @@ export async function runBindingWizard(
                 );
                 container.addChild(editor);
                 hint = "enter confirm • esc back";
+            } else if (step === "args") {
+                container.addChild(
+                    new Text(
+                        theme.fg(
+                            "dim",
+                            `  ${commandValue.trim()} — type args, or enter empty to skip`,
+                        ),
+                        0,
+                        0,
+                    ),
+                );
+                container.addChild(editor);
+                hint = "enter confirm • esc back";
             } else if (step === "command") {
                 picker = makeCommandPicker(theme, menu, {
                     getQuery: () => query,
@@ -460,8 +492,7 @@ export async function runBindingWizard(
                     onCancel: back,
                 });
                 container.addChild(picker);
-                hint =
-                    "enter fill command • enter again (add args first if you like) to confirm • esc back";
+                hint = "enter fill command • enter again for args • esc back";
             }
 
             if (list) container.addChild(list);
@@ -486,20 +517,24 @@ export async function runBindingWizard(
                         matchesKey(data, Key.enter) &&
                         query.trim().length > 1
                     ) {
-                        if (!query.trim().startsWith("/")) {
+                        const text = query.trim();
+                        if (!text.startsWith("/")) {
                             status = "command must start with /";
                             refresh();
                             return;
                         }
-                        commandValue = query.trim();
-                        goSequence();
+                        // Inline args typed in the picker split off into
+                        // the args step (prefilled, still editable).
+                        const ws = text.search(/\s/);
+                        commandValue = ws === -1 ? text : text.slice(0, ws);
+                        goArgs(ws === -1 ? "" : text.slice(ws).trim());
                         return;
                     }
                     picker?.handleInput(data);
                     tui.requestRender();
                     return;
                 }
-                if (step === "exec" || step === "sequence") {
+                if (step === "exec" || step === "sequence" || step === "args") {
                     editor.handleInput(data);
                     tui.requestRender();
                     return;

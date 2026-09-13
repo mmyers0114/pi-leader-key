@@ -39,7 +39,7 @@ An empty `bindings` object is the shipped state: pressing the leader key warns "
 
 Each binding is exactly one of:
 
-- **`command`** — a slash command, routed through pi's full editor pipeline. Anything starting with `/`. Arguments work: the string is passed verbatim to pi's submit handler, so `{ "command": "/model opus" }` behaves exactly like typing it. Largely untested beyond one manual `/model <name>` check.
+- **`command`** — a slash command, routed through pi's full editor pipeline. Anything starting with `/`. Arguments go in the explicit `args` field: `{ "command": "/model", "args": "opus" }` dispatches `"/model opus"`, exactly like typing it. Legacy embedded form (`{ "command": "/model opus" }`) normalizes identically at load (split on first space, trim edges, interior verbatim). Args are opaque — never an array, never re-tokenized.
 - **`action`** — direct API call: `"compact"` (trigger conversation compaction), `"shutdown"` (graceful shutdown), `"clearEditor"` (clear the editor text).
 - **`exec`** — shell command run via `bash -c`; output is shown as a notification.
 
@@ -53,7 +53,7 @@ A sequence that is also a prefix of another binding waits `sequenceTimeoutMs` fo
 
 ## Adding bindings
 
-Run `/leader-bind` for an interactive wizard: type → value → key sequence →
+Run `/leader-bind` for an interactive wizard: type → value (+ optional args step for `command`) → key sequence →
 conflict check → save. It writes the merged config and the binding works
 immediately. Escape backs out a step; cancel writes nothing.
 

@@ -2,7 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
-## [1.1.1] - 2026-09-13
+## [1.2.0] - 2026-09-13
+
+### Added
+
+- Command bindings take an explicit optional `args` field:
+  `{ "command": "/model", "args": "opus" }` dispatches `"/model opus"`
+  through the full editor submit pipeline. Args are opaque (edges trimmed,
+  interior kept verbatim); `command` itself must be a bare slash name (no
+  interior whitespace). Legacy embedded form (`{ "command": "/model opus" }`)
+  normalizes identically at load, so existing configs keep working; new
+  `/leader-bind` writes always use the split form.
+- `/leader-bind` gains an optional args step after the command pick (Enter
+  on empty = no args); summary and conflict lines show the composed
+  `command + args` string.
+- Invalid bindings are reported: `loadConfig` returns `dropped: string[]`
+  and the leader-key handler notifies once per press
+  (`Ignored invalid bindings: "x" — check leader-key.json.`).
 
 ### Fixed
 

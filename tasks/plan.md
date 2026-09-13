@@ -1,39 +1,58 @@
-# Plan: Binding Wizard (`/leader-bind`)
+# Implementation Plan: Command Args at the Config Level
 
-Implements SPEC-leader-bind.md. Work happens on branch `feat/binding-wizard`.
+## Overview
 
-## Components & Order
+Split the `command` binding's embedded args (`{ "command": "/model opus" }`) into an explicit optional field (`{ "command": "/model", "args": "opus" }`). Command and args get different validation rules (strict vs. opaque), the wizard gains an optional args step, and dropped-binding visibility closes the silent-drop gap. Fully backward compatible: legacy embedded-args bindings load identically. Target release: **1.2.0**, folding in the unpublished 1.1.1 hardening (tag exists locally only — delete it at release time and ship once).
 
-1. **Pure logic (logic.ts)** — foundation, no UI dependency
-   - `validateSequence(seq: string): string | null` — returns error message or null if valid (non-empty, printable ASCII, no whitespace, trimmed).
-   - `findConflicts(bindings, seq): string[]` — exact matches + prefix relations (new is prefix of existing, existing is prefix of new), same rules as runtime matching.
-   - `mergeBinding(config, seq, binding): LeaderConfig` — returns NEW config (no input mutation), adds/replaces one binding, preserves all others.
-2. **Config write (logic.ts)** — `saveBinding(config, seq, binding): void` — read file → parse → merge → write back. On read/write error: notify and leave file untouched. Lives in logic.ts except the `ctx.ui.notify` call, which stays in index.ts (keeps logic pi-free; return a result object instead).
-3. **Wizard overlay (index.ts)** — single `ctx.ui.custom` component, `questionnaire.ts` pattern:
-   - Step machine: type → value → sequence → (conflict confirm, conditional) → confirm.
-   - Type step: SelectList (3 options + descriptions).
-   - Value step: command → existing picker (extract `/leader-commands`'s SelectList rendering into a reusable function); action → SelectList; exec → embedded Editor.
-   - Sequence step: Editor + inline validation via `validateSequence`.
-   - Conflict step: only rendered when `findConflicts` returns non-empty; lists collisions, explicit confirm.
-   - Confirm step: summary + save via `saveBinding`; Escape anywhere → `done(null)`, nothing written.
-4. **Entry points (index.ts)**
-   - `pi.registerCommand("leader-bind", …)`.
-   - "Add binding" item at the top of the `/leader-commands` menu.
-5. **Cache check** — verify dispatch re-reads config each press (suspected: `dispatchBinding` takes `current: LeaderConfig` from a cached variable). If cached, reload config after a successful save.
-6. **Docs** — README + AGENTS.md: `/leader-bind` mention in binding/config sections.
+Supersedes the completed binding-wizard plan (shipped in v1.1.0; its todo boxes are checked retroactively in git history).
 
-## Risks & Mitigations
+## Architecture Decisions
 
-- **Overlay complexity** (5 steps in one component) → step machine as a plain state variable, render function per step, borrowed wholesale from questionnaire.ts's tab pattern.
-- **Config write race** (two pi sessions) → out of scope v1; single-user tool, last-write-wins acceptable. Note in code as `ponytail:` comment only if a lock is trivially cheap — otherwise skip.
-- **Picker reuse churn** — extracting the shared picker may touch `/leader-commands` rendering; keep the diff surgical, no behavior change to the existing command (its deprecation is deferred and gated on re-discussion).
+- **`args?: string`, not an array.** pi passes handlers one raw string (everything after the first space, no tokenizing, no quote parsing — verified in `agent-session.js:_tryExecuteExtensionCommand`). An array implies a token model that doesn't exist. Schema mirrors the platform.
+- **Validation stays in `loadConfig` (per press), not cached at session start.** Dispatch re-reads config every press so hand-edits apply without restart; per-press validation of a tiny JSON file costs microseconds. Caching would reintroduce stale-state crashes for zero measurable gain.
+- **Legacy normalization at load, not migration.** `{ "command": "/model opus" }` splits on the first space into command+args and behaves identically. New writes always use the split form. No user action, no breakage.
+- **Normalization rule: trim edges only, never touch the interior.** Args are opaque (pi does no quote parsing), so collapsing interior whitespace could corrupt quoted content. Split trims both parts; dispatch composes with a single space.
+- **No unknown-command warning anywhere.** Wizard picker is built from live `getCommands()` (impossible path); hand-edited unknown names can't be checked robustly (built-ins aren't enumerable from the extension API). Documented residual, not guarded.
+- **Dropped bindings become visible.** `ConfigResult` gains `dropped: string[]`; the shortcut handler notifies once per press when non-empty.
 
-## Verification Checkpoints
+## Task List
 
-- After step 1–2: full suite green (`npx tsx __tests__/logic.test.ts`).
-- After step 3: manual `/leader-bind` run in dev-installed pi session (per spec Commands).
-- After step 4–5: success criteria checklist in the spec, item by item.
+### Phase 1: Foundation (logic.ts)
 
-## Sequencing
+- [x] Task 1: Split command/args schema with legacy normalization
+- [x] Task 2: Surface dropped bindings
 
-Strictly sequential (1→2→3→4→5→6): each layer depends on the previous. No parallel work.
+### Checkpoint: Foundation
+
+- [ ] Full suite green (`npx tsx __tests__/logic.test.ts`)
+- [ ] `lens_diagnostics mode=full` clean
+
+### Phase 2: Consumers
+
+- [x] Task 3: Dispatch composes command + args
+- [x] Task 4: Wizard optional args step
+
+### Checkpoint: Consumers
+
+- [ ] Full suite green
+- [ ] Manual wizard run: create command binding with and without args, fire both in-session
+
+### Phase 3: Release
+
+- [x] Task 5: Docs, verification matrix, 1.2.0
+
+### Checkpoint: Complete
+
+- [ ] All acceptance criteria met, human review, push + tag
+
+## Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+| ------ | -------- | ------------ |
+| Legacy split changes dispatch bytes (`"/model  opus"` → `"/model opus"`) | Low | pi trims and splits on first space; interior double-space only mattered inside opaque args, which handlers receive trimmed-or-verbatim either way. Covered by a test pinning the normalization. |
+| `shouldRestoreDraft` comparison breaks for composed commands | Low | Caller passes the composed string; existing tests plus a new args case pin it. |
+| Scope creep into unknown-command guarding | Med | Explicitly out of scope (see decision above); enforce in review. |
+
+## Open Questions
+
+- None. Decided: single 1.2.0 release (minor — new user-facing capability, backward compatible), folding in unpublished 1.1.1. At release: `git tag -d v1.1.1`, combined changelog entry, `package.json` → 1.2.0, tag `v1.2.0`.

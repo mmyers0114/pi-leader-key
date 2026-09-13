@@ -53,12 +53,12 @@ Anything you can type after `/` can go behind a key sequence — including comma
   "bindings": {
     "ov": { "command": "/om:view" },
     "r1": { "command": "/review:1" },
-    "mo": { "command": "/model opus" }
+    "mo": { "command": "/model", "args": "opus" }
   }
 }
 ```
 
-Command bindings run through pi's full editor submit pipeline, exactly as if you had typed the text and pressed Enter — so arguments work too. The binding fires against whatever commands are registered in that session, which means a binding to a command from a removed package simply does nothing until the package is back.
+Command bindings run through pi's full editor submit pipeline, exactly as if you had typed the text and pressed Enter — so arguments work too. Put them in the explicit `args` field; the two forms below dispatch byte-identically (`"/model opus"`), and the legacy embedded form keeps loading so existing configs don't break:
 
 > [!TIP]
 > Don't guess at command names — run `/leader-commands` to browse everything invokable in your current session, or `/leader-bind` to pick one and bind it in a single flow.
@@ -100,12 +100,12 @@ Invalid values fall back to defaults, and malformed binding entries are ignored 
 | Type | Example | What it does |
 | ---- | ------- | ------------ |
 | `command` | `{ "command": "/model" }` | Runs a slash command through pi's full editor pipeline |
-| `command` + args | `{ "command": "/model opus" }` | Same, with arguments |
+| `command` + args | `{ "command": "/model", "args": "opus" }` | Same, with arguments (legacy `{ "command": "/model opus" }` also accepted) |
 | `action` | `{ "action": "compact" }` | `compact`, `shutdown`, or `clearEditor` |
 | `exec` | `{ "exec": "git status" }` | Runs via `bash -c` (15s timeout); output shown as a notification, capped at 2KB |
 
 > [!NOTE]
-> Command-with-arguments bindings are passed verbatim through the same handler a manual Enter press triggers. Beyond `/model <name>` they are lightly exercised — if a command behaves differently bound than typed, please file an issue.
+> `command` + `args` dispatches the composed string (`command + " " + args`) through the same handler a manual Enter press triggers. Args are opaque: edges trimmed, interior kept verbatim; a legacy `"/model  opus"` (double space) normalizes to `"/model opus"`. Unknown command names pass through untouched — the binding fires against whatever is registered that session, so a command from a removed package simply does nothing until the package is back. Composition, normalization, and draft-restore against the composed string are pinned by unit tests; if a command behaves differently bound than typed, please file an issue.
 
 ### Sequences
 

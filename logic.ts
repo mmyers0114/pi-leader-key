@@ -15,10 +15,36 @@ import { homedir } from "node:os";
 
 export type EditorEffect = "grayedOut" | "none";
 
+export interface CommandBinding {
+    command: string;
+    /** Raw args string — opaque, passed through verbatim (edges trimmed). */
+    args?: string;
+}
+
 export type BindingAction =
-    | { command: string }
+    | CommandBinding
     | { action: "compact" | "shutdown" | "clearEditor" }
     | { exec: string };
+
+/** Compose a command binding into the exact string dispatch submits. */
+export function composeCommand(b: CommandBinding): string {
+    return b.args ? `${b.command} ${b.args}` : b.command;
+}
+
+/**
+ * Validate a command name (no args — those live in `args`). Returns an
+ * error code ("empty" | "lone-slash" | "missing-slash" | "whitespace")
+ * or null when valid.
+ */
+export function validateCommand(raw: unknown): string | null {
+    if (typeof raw !== "string") return "empty";
+    const cmd = raw.trim();
+    if (cmd.length === 0) return "empty";
+    if (cmd === "/") return "lone-slash";
+    if (!cmd.startsWith("/")) return "missing-slash";
+    if (/\s/.test(cmd)) return "whitespace";
+    return null;
+}
 
 export interface LeaderConfig {
     leaderKey: string;
@@ -48,6 +74,8 @@ export type ConfigError = "missing" | "parse" | null;
 export interface ConfigResult {
     config: LeaderConfig;
     error: ConfigError;
+    /** Keys sanitized away — surfaced once per leader press, never silent. */
+    dropped: string[];
 }
 
 /** Guard for hand-edited config: only well-shaped bindings reach dispatch. */
@@ -55,7 +83,10 @@ export function isBindingAction(v: unknown): v is BindingAction {
     if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
     const o = v as Record<string, unknown>;
     if ("command" in o)
-        return typeof o.command === "string" && o.command.trim().length > 0;
+        return (
+            validateCommand(o.command) === null &&
+            (!("args" in o) || typeof o.args === "string")
+        );
     if ("action" in o)
         return (
             o.action === "compact" ||
@@ -67,20 +98,55 @@ export function isBindingAction(v: unknown): v is BindingAction {
     return false;
 }
 
-function sanitizeBindings(v: unknown): Record<string, BindingAction> {
-    if (v == null || typeof v !== "object" || Array.isArray(v)) return {};
-    const out: Record<string, BindingAction> = {};
+function sanitizeBindings(v: unknown): {
+    bindings: Record<string, BindingAction>;
+    dropped: string[];
+} {
+    const empty = { bindings: {}, dropped: [] as string[] };
+    if (v == null || typeof v !== "object" || Array.isArray(v)) return empty;
+    const bindings: Record<string, BindingAction> = {};
+    const dropped: string[] = [];
     for (const [k, entry] of Object.entries(v as Record<string, unknown>)) {
-        if (isBindingAction(entry)) out[k] = entry;
+        const normalized = normalizeBinding(entry);
+        if (normalized) bindings[k] = normalized;
+        else dropped.push(k);
     }
-    return out;
+    return { bindings, dropped };
+}
+
+/**
+ * Normalize one raw binding: legacy `{ command: "/cmd args" }` splits on
+ * the first whitespace run (explicit `args` wins on the rare both-present
+ * case); args edges are trimmed, interior kept verbatim. Returns null when
+ * the entry is not a well-shaped binding.
+ */
+function normalizeBinding(v: unknown): BindingAction | null {
+    if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+    const o = v as Record<string, unknown>;
+    if ("command" in o && typeof o.command === "string") {
+        const text = o.command.trim();
+        const ws = text.search(/\s/);
+        const head = ws === -1 ? text : text.slice(0, ws);
+        const embedded = ws === -1 ? "" : text.slice(ws).trim();
+        if (validateCommand(head) !== null) return null;
+        const explicit = "args" in o ? o.args : undefined;
+        if (explicit !== undefined && typeof explicit !== "string") {
+            return null;
+        }
+        // Explicit args win over the embedded remainder when both exist.
+        const args = explicit?.trim() || embedded;
+        return args ? { command: head, args } : { command: head };
+    }
+    return isBindingAction(v) ? (v as BindingAction) : null;
 }
 
 export function loadConfig(path: string = CONFIG_PATH): ConfigResult {
     const defaults = { ...DEFAULT_CONFIG, bindings: {} };
     try {
-        if (!existsSync(path)) return { config: defaults, error: "missing" };
+        if (!existsSync(path))
+            return { config: defaults, error: "missing", dropped: [] };
         const parsed = JSON.parse(readFileSync(path, "utf-8"));
+        const { bindings, dropped } = sanitizeBindings(parsed.bindings);
         return {
             config: {
                 leaderKey:
@@ -103,12 +169,13 @@ export function loadConfig(path: string = CONFIG_PATH): ConfigResult {
                     parsed.editorEffect === "none"
                         ? "none"
                         : DEFAULT_CONFIG.editorEffect,
-                bindings: sanitizeBindings(parsed.bindings),
+                bindings,
             },
             error: null,
+            dropped,
         };
     } catch {
-        return { config: defaults, error: "parse" };
+        return { config: defaults, error: "parse", dropped: [] };
     }
 }
 

@@ -24,8 +24,10 @@ import {
     buildCommandMenu,
     defaultConfigJson,
     ensureConfig,
+    composeCommand,
     isBindingAction,
     isProperPrefix,
+    validateCommand,
     isPrintableKey,
     loadConfig,
     processKey,
@@ -445,7 +447,18 @@ section("isBindingAction");
 
 {
     assert(isBindingAction({ command: "/model" }), "valid command");
-    assert(isBindingAction({ command: "/model opus" }), "command with args");
+    assert(
+        isBindingAction({ command: "/model", args: "opus" }),
+        "command with split args",
+    );
+    assert(
+        !isBindingAction({ command: "/model opus" }),
+        "embedded-args command rejected at guard (sanitize splits it)",
+    );
+    assert(
+        !isBindingAction({ command: "/model", args: 123 }),
+        "non-string args rejected",
+    );
     assert(isBindingAction({ action: "compact" }), "valid action compact");
     assert(isBindingAction({ action: "shutdown" }), "valid action shutdown");
     assert(
@@ -476,6 +489,113 @@ section("isBindingAction");
     );
     const r = loadConfig(CONFIG_PATH);
     assertEq(Object.keys(r.config.bindings), ["ok"], "invalid dropped");
+}
+
+section("validateCommand");
+
+{
+    assertEq(validateCommand("/model"), null, "bare command valid");
+    assertEq(validateCommand("  /model  "), null, "edges trimmed");
+    assertEq(validateCommand(""), "empty", "empty rejected");
+    assertEq(validateCommand("   "), "empty", "blank rejected");
+    assertEq(validateCommand("/"), "lone-slash", "lone slash rejected");
+    assertEq(
+        validateCommand("model"),
+        "missing-slash",
+        "missing leading slash rejected",
+    );
+    assertEq(
+        validateCommand("/mo del"),
+        "whitespace",
+        "interior whitespace rejected",
+    );
+}
+
+section("legacy embedded-args normalization");
+
+{
+    // Old shape keeps loading: split on the first space, trim both parts.
+    writeFileSync(
+        CONFIG_PATH,
+        JSON.stringify({
+            bindings: {
+                legacy: { command: "/model opus" },
+                split: { command: "/model", args: "opus" },
+            },
+        }),
+    );
+    const r = loadConfig(CONFIG_PATH);
+    assertEq(
+        r.config.bindings.legacy,
+        { command: "/model", args: "opus" },
+        "legacy embedded args split",
+    );
+    assertEq(
+        r.config.bindings.split,
+        { command: "/model", args: "opus" },
+        "split form preserved",
+    );
+    assertEq(
+        composeCommand(r.config.bindings.legacy!),
+        composeCommand(r.config.bindings.split!),
+        "both forms dispatch identically",
+    );
+
+    // Args are opaque: interior whitespace preserved, edges trimmed.
+    writeFileSync(
+        CONFIG_PATH,
+        JSON.stringify({
+            bindings: { q: { command: "/ask", args: "  a  b  " } },
+        }),
+    );
+    assertEq(
+        loadConfig(CONFIG_PATH).config.bindings.q,
+        { command: "/ask", args: "a  b" },
+        "args edges trimmed, interior kept",
+    );
+}
+
+section("dropped bindings");
+
+{
+    writeFileSync(
+        CONFIG_PATH,
+        JSON.stringify({
+            bindings: {
+                ok: { command: "/model" },
+                nul: null,
+                empty: {},
+                bad: { action: "bogus" },
+            },
+        }),
+    );
+    const r = loadConfig(CONFIG_PATH);
+    assertEq(r.dropped, ["nul", "empty", "bad"], "dropped keys reported");
+    assertEq(Object.keys(r.config.bindings), ["ok"], "valid binding survives");
+
+    writeFileSync(
+        CONFIG_PATH,
+        JSON.stringify({ bindings: { ok: { command: "/model" } } }),
+    );
+    assertEq(loadConfig(CONFIG_PATH).dropped, [], "clean config drops none");
+
+    if (existsSync(CONFIG_PATH)) unlinkSync(CONFIG_PATH);
+    assertEq(loadConfig(CONFIG_PATH).dropped, [], "missing file drops none");
+}
+
+section("composeCommand");
+
+{
+    assertEq(
+        composeCommand({ command: "/model" }),
+        "/model",
+        "no args composes bare",
+    );
+    assertEq(
+        composeCommand({ command: "/model", args: "opus" }),
+        "/model opus",
+        "args appended with single space",
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -932,6 +1052,16 @@ section("shouldRestoreDraft");
     assert(
         shouldRestoreDraft("", "/x"),
         "empty draft with empty after restores",
+    );
+
+    // Composed command + args: the comparison uses the full submitted string.
+    assert(
+        shouldRestoreDraft("/model opus", "/model opus"),
+        "composed command left in editor restores draft",
+    );
+    assert(
+        !shouldRestoreDraft("opus-4.6", "/model opus"),
+        "handler output wins over composed command draft",
     );
 }
 

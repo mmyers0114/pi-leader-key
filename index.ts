@@ -35,9 +35,13 @@
  *     "q":  { "action": "shutdown" },
  *     "gs": { "exec": "git status" },
  *     "su": { "command": "/spin-up" },
- *     "m":  { "command": "/model" }
+ *     "m":  { "command": "/model" },
+ *     "mo": { "command": "/model", "args": "opus" }
  *   }
  * }
+ *
+ * Legacy embedded args ({ "command": "/model opus" }) normalize
+ * identically at load; new writes use the split form.
  *
  * ## editorEffect values
  *
@@ -48,7 +52,8 @@
  *
  *   command — Routes through the editor's onSubmit pipeline for full
  *     slash-command processing. Works for extension commands and
- *     built-in commands alike.
+ *     built-in commands alike. Arguments go in the explicit `args`
+ *     field and are composed as `command + " " + args`.
  *
  *   action — Calls a pi API directly.
  *     "compact"      — trigger conversation compaction
@@ -74,6 +79,7 @@ import {
 } from "@earendil-works/pi-tui";
 import {
     buildCommandMenu,
+    composeCommand,
     CONFIG_PATH,
     ensureConfig,
     isPrintableKey,
@@ -238,11 +244,12 @@ export default function (pi: ExtensionAPI) {
         if (!binding) return;
 
         if ("command" in binding) {
+            const submitted = composeCommand(binding);
             const draft = leaderEditor?.getText() ?? "";
-            leaderEditor?.setText(binding.command);
-            await leaderEditor?.onSubmit?.(binding.command);
+            leaderEditor?.setText(submitted);
+            await leaderEditor?.onSubmit?.(submitted);
             // Give the draft back unless the command left new text behind.
-            if (shouldRestoreDraft(ctx.ui.getEditorText(), binding.command)) {
+            if (shouldRestoreDraft(ctx.ui.getEditorText(), submitted)) {
                 ctx.ui.setEditorText(draft);
             }
             return;
@@ -418,11 +425,17 @@ export default function (pi: ExtensionAPI) {
         handler: async (ctx) => {
             if (ctx.mode !== "tui") return;
 
-            const { config: current, error } = loadConfig();
+            const { config: current, error, dropped } = loadConfig();
             if (error === "parse") {
                 ctx.ui.notify(
                     `Failed to parse ${CONFIG_PATH} — using defaults.`,
                     "error",
+                );
+            }
+            if (dropped.length > 0) {
+                ctx.ui.notify(
+                    `Ignored invalid bindings: ${dropped.map((k) => `"${k}"`).join(", ")} — check leader-key.json.`,
+                    "warning",
                 );
             }
             if (Object.keys(current.bindings).length === 0) {
