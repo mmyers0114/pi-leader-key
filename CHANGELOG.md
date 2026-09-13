@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.1.1] - 2026-09-13
+
+### Fixed
+
+- Malformed bindings in `leader-key.json` (null, empty, or wrong-shaped
+  entries from hand-editing) no longer crash dispatch — `loadConfig` drops
+  invalid entries and keeps the valid ones; unknown `action` values notify
+  instead of silently doing nothing.
+- `/leader-bind` command step requires a leading `/`, so free-typed text
+  can't save as a broken `{ command }` binding.
+- Command dispatch restores the user's pre-dispatch editor draft (built-ins
+  clear the editor; extension commands leave the command text).
+- Documented that changing `leaderKey` requires a pi restart (the shortcut
+  registers once at startup; all other settings apply on next press).
+
 ## [1.1.0] - 2026-09-05
 
 ### Added
