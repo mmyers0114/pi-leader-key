@@ -219,6 +219,8 @@ export async function runBindingWizard(
             refresh();
         };
 
+        let chosenAction: "compact" | "shutdown" | "clearEditor" = "compact";
+
         const makeBinding = (): BindingAction => {
             if (bindingType === "command")
                 return { command: commandValue.trim() };
@@ -241,8 +243,6 @@ export async function runBindingWizard(
                 refresh();
             }
         };
-
-        let chosenAction: "compact" | "shutdown" | "clearEditor" = "compact";
 
         const describeBinding = (b: BindingAction): string => {
             if ("command" in b) return b.command;
@@ -486,6 +486,11 @@ export async function runBindingWizard(
                         matchesKey(data, Key.enter) &&
                         query.trim().length > 1
                     ) {
+                        if (!query.trim().startsWith("/")) {
+                            status = "command must start with /";
+                            refresh();
+                            return;
+                        }
                         commandValue = query.trim();
                         goSequence();
                         return;
