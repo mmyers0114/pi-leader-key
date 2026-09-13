@@ -50,6 +50,32 @@ export interface ConfigResult {
     error: ConfigError;
 }
 
+/** Guard for hand-edited config: only well-shaped bindings reach dispatch. */
+export function isBindingAction(v: unknown): v is BindingAction {
+    if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+    const o = v as Record<string, unknown>;
+    if ("command" in o)
+        return typeof o.command === "string" && o.command.trim().length > 0;
+    if ("action" in o)
+        return (
+            o.action === "compact" ||
+            o.action === "shutdown" ||
+            o.action === "clearEditor"
+        );
+    if ("exec" in o)
+        return typeof o.exec === "string" && o.exec.trim().length > 0;
+    return false;
+}
+
+function sanitizeBindings(v: unknown): Record<string, BindingAction> {
+    if (v == null || typeof v !== "object" || Array.isArray(v)) return {};
+    const out: Record<string, BindingAction> = {};
+    for (const [k, entry] of Object.entries(v as Record<string, unknown>)) {
+        if (isBindingAction(entry)) out[k] = entry;
+    }
+    return out;
+}
+
 export function loadConfig(path: string = CONFIG_PATH): ConfigResult {
     const defaults = { ...DEFAULT_CONFIG, bindings: {} };
     try {
@@ -77,12 +103,7 @@ export function loadConfig(path: string = CONFIG_PATH): ConfigResult {
                     parsed.editorEffect === "none"
                         ? "none"
                         : DEFAULT_CONFIG.editorEffect,
-                bindings:
-                    parsed.bindings != null &&
-                    typeof parsed.bindings === "object" &&
-                    !Array.isArray(parsed.bindings)
-                        ? parsed.bindings
-                        : {},
+                bindings: sanitizeBindings(parsed.bindings),
             },
             error: null,
         };

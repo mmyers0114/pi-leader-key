@@ -24,6 +24,7 @@ import {
     buildCommandMenu,
     defaultConfigJson,
     ensureConfig,
+    isBindingAction,
     isProperPrefix,
     isPrintableKey,
     loadConfig,
@@ -437,6 +438,47 @@ function cmd(
 }
 
 // ---------------------------------------------------------------------------
+// isBindingAction + loadConfig sanitizing (hand-edited config guard)
+// ---------------------------------------------------------------------------
+
+section("isBindingAction");
+
+{
+    assert(isBindingAction({ command: "/model" }), "valid command");
+    assert(isBindingAction({ command: "/model opus" }), "command with args");
+    assert(isBindingAction({ action: "compact" }), "valid action compact");
+    assert(isBindingAction({ action: "shutdown" }), "valid action shutdown");
+    assert(
+        isBindingAction({ action: "clearEditor" }),
+        "valid action clearEditor",
+    );
+    assert(isBindingAction({ exec: "git status" }), "valid exec");
+    assert(!isBindingAction(null), "null rejected");
+    assert(!isBindingAction("x"), "string rejected");
+    assert(!isBindingAction([]), "array rejected");
+    assert(!isBindingAction({}), "empty object rejected");
+    assert(!isBindingAction({ command: 123 }), "non-string command rejected");
+    assert(!isBindingAction({ command: "  " }), "blank command rejected");
+    assert(!isBindingAction({ action: "bogus" }), "unknown action rejected");
+    assert(!isBindingAction({ exec: "" }), "blank exec rejected");
+
+    // Malformed entries never reach dispatch: valid survive, rest dropped.
+    writeFileSync(
+        CONFIG_PATH,
+        JSON.stringify({
+            bindings: {
+                ok: { command: "/model" },
+                nul: null,
+                empty: {},
+                bad: { action: "bogus" },
+            },
+        }),
+    );
+    const r = loadConfig(CONFIG_PATH);
+    assertEq(Object.keys(r.config.bindings), ["ok"], "invalid dropped");
+}
+
+// ---------------------------------------------------------------------------
 // Config loading
 // ---------------------------------------------------------------------------
 
@@ -533,7 +575,7 @@ section("Config loading");
     writeFileSync(
         CONFIG_PATH,
         JSON.stringify({
-            bindings: { x: {} },
+            bindings: { x: { command: "/model" } },
         }),
     );
     const r3 = loadConfig(CONFIG_PATH);
