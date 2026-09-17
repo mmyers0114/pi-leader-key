@@ -3,3 +3,4 @@
 leader-key.json
 node_modules/
 *.tgz
+.agents/
