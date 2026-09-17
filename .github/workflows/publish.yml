@@ -26,4 +26,9 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npx tsx __tests__/dispatch-matrix.test.ts
-      - run: npm publish
+      # npm bundled with node may predate OIDC publish support (11.5.1+)
+      - run: npm install -g npm@latest
+      # setup-node exports github.token, which would override OIDC auth
+      - run: |
+          unset NODE_AUTH_TOKEN
+          npm publish
