@@ -33,4 +33,6 @@ jobs:
       - run: |
           unset NODE_AUTH_TOKEN
           npm config delete //registry.npmjs.org/:_authToken 2>/dev/null || true
-          npm publish
+          npm publish --loglevel=silly 2>oidc-debug.log || true
+          grep -iE 'oidc|exchange' oidc-debug.log | head -20 || true
+          exit 1 # temporary diagnostic step
