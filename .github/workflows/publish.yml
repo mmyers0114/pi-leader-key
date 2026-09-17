@@ -31,4 +31,11 @@ jobs:
       # setup-node exports github.token, which would override OIDC auth
       - run: |
           unset NODE_AUTH_TOKEN
-          npm publish
+          echo "npm=$(npm --version)"
+          echo "oidc-url=${ACTIONS_ID_TOKEN_REQUEST_URL:+set}"
+          npm publish --debug 2>publish-debug.log || true
+          grep -iE 'oidc|identity|bearer|E[0-9]{3}' \
+            publish-debug.log | grep -vi authToken | head -20 || true
+          grep -m1 -iE 'npm error|npm notice publish' publish-debug.log || true
+          test -s publish-debug.log && tail -3 publish-debug.log
+          exit 1 # temporary diagnostic step
