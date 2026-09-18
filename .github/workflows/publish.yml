@@ -35,7 +35,8 @@ jobs:
       - run: |
           unset NODE_AUTH_TOKEN
           npm config delete //registry.npmjs.org/:_authToken 2>/dev/null || true
-          if ! npm publish 2>oidc-debug.log; then
-            grep -iE 'oidc|exchange' oidc-debug.log | head -20 || true
+          if ! npm publish; then
+            logf=$(ls -t /home/runner/.npm/_logs/*-debug-0.log | head -1)
+            grep -iE 'oidc|exchange' "$logf" | head -20 || true
             exit 1
           fi
