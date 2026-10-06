@@ -7,12 +7,13 @@
 
 import {
     existsSync,
+    mkdirSync,
     readFileSync,
     renameSync,
     rmSync,
     writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
 // ---------------------------------------------------------------------------
@@ -62,8 +63,13 @@ export interface LeaderConfig {
 
 export const DEFAULT_CONFIG: LeaderConfig = {
     leaderKey: "ctrl+space",
-    leaderTimeoutMs: 3600,
-    sequenceTimeoutMs: 750,
+    // 1000ms matches vim's `timeoutlen`: the grace period after the leader key.
+    // The grayed-out editor shows leader mode is armed, so a shorter wait is safe.
+    leaderTimeoutMs: 1000,
+    // 400ms is the gap *within* a sequence. This value also decides prefix
+    // disambiguation ("g" before "gs"), so it cannot go as low as vim's 100ms
+    // `ttimeoutlen` without firing premature bindings.
+    sequenceTimeoutMs: 400,
     editorEffect: "grayedOut",
     bindings: {},
 };
@@ -221,10 +227,16 @@ export function validateLeaderKey(raw: unknown): string | null {
     return null;
 }
 
-function positiveMs(raw: unknown, fallback: number): number {
+/** Positive finite number, or `fallback`. Strings fall back — the wizard parses with Number() first. */
+export function positiveMs(raw: unknown, fallback: number): number {
     return typeof raw === "number" && Number.isFinite(raw) && raw > 0
         ? raw
         : fallback;
+}
+
+/** "none" or the default. Legacy "spinner" and anything else coerce to grayedOut. */
+export function validateEditorEffect(raw: unknown): EditorEffect {
+    return raw === "none" ? "none" : DEFAULT_CONFIG.editorEffect;
 }
 
 export function loadConfig(path: string = CONFIG_PATH): ConfigResult {
@@ -263,12 +275,7 @@ export function loadConfig(path: string = CONFIG_PATH): ConfigResult {
                     parsed.sequenceTimeoutMs,
                     DEFAULT_CONFIG.sequenceTimeoutMs,
                 ),
-                // Configs from the spinner era may still carry editorEffect: "spinner";
-                // anything that isn't "none" falls back to the default (grayedOut).
-                editorEffect:
-                    parsed.editorEffect === "none"
-                        ? "none"
-                        : DEFAULT_CONFIG.editorEffect,
+                editorEffect: validateEditorEffect(parsed.editorEffect),
                 bindings,
             },
             error: null,
@@ -278,32 +285,6 @@ export function loadConfig(path: string = CONFIG_PATH): ConfigResult {
         };
     } catch {
         return { ...blank, error: "parse" };
-    }
-}
-
-// ---------------------------------------------------------------------------
-// First-run config bootstrap
-// ---------------------------------------------------------------------------
-
-/** Pretty-printed blank config — the template written on first startup. */
-export function defaultConfigJson(): string {
-    return JSON.stringify(DEFAULT_CONFIG, null, 2) + "\n";
-}
-
-export type EnsureConfigResult = "created" | "exists" | "error";
-
-/**
- * Write the default config on first startup. Guarded: never touches an
- * existing file (even an invalid one), and a failed write just reports —
- * loadConfig's in-memory defaults keep the extension working.
- */
-export function ensureConfig(path: string = CONFIG_PATH): EnsureConfigResult {
-    if (existsSync(path)) return "exists";
-    try {
-        writeFileSync(path, defaultConfigJson());
-        return "created";
-    } catch {
-        return "error";
     }
 }
 
@@ -726,68 +707,38 @@ function describe(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
 }
 
-/**
- * Merge one binding into the config file on disk: read → merge → write.
- * A corrupt or unreadable existing file is never overwritten (a failed
- * write must not lose user config); the result object carries the error
- * so the caller decides how to surface it.
- */
-/**
- * Merge one binding into the config file on disk: read → merge → write.
- *
- * The merge is done against the RAW parsed file, not the normalized
- * config, so fields this version doesn't model (and bindings it can't
- * parse) survive a save instead of being silently deleted. The write goes
- * to a temp file and is renamed into place, so an interrupted write can't
- * leave a truncated config. A corrupt or unreadable existing file is never
- * overwritten; the result object carries the error so the caller decides
- * how to surface it.
- */
-export function saveBinding(
-    seq: string,
-    binding: BindingAction,
-    path: string = CONFIG_PATH,
-): SaveResult {
-    let raw: Record<string, unknown> = {};
-    if (existsSync(path)) {
-        let text: string;
-        try {
-            text = readFileSync(path, "utf-8");
-        } catch (err) {
-            return {
-                ok: false,
-                error: `cannot read config file: ${describe(err)}`,
-            };
-        }
-        let parsed: unknown;
-        try {
-            parsed = JSON.parse(text);
-        } catch {
-            return {
-                ok: false,
-                error: "config file is not valid JSON — fix or remove it first",
-            };
-        }
-        if (!isPlainObject(parsed))
-            return {
-                ok: false,
-                error: "config file is not a JSON object — fix or remove it first",
-            };
-        raw = parsed;
+/** Missing file is an empty object. Corrupt or non-object is a refusal. */
+function readRaw(
+    path: string,
+): { ok: true; raw: Record<string, unknown> } | { ok: false; error: string } {
+    if (!existsSync(path)) return { ok: true, raw: {} };
+    let text: string;
+    try {
+        text = readFileSync(path, "utf-8");
+    } catch (err) {
+        return { ok: false, error: `cannot read config file: ${describe(err)}` };
     }
-    const existing = isPlainObject(raw.bindings) ? raw.bindings : {};
-    const next = {
-        ...raw,
-        // Object.fromEntries defines keys instead of assigning them, so a
-        // sequence named `__proto__` stays an ordinary binding.
-        bindings: Object.fromEntries([
-            ...Object.entries(existing),
-            [seq, binding],
-        ]),
-    };
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(text);
+    } catch {
+        return {
+            ok: false,
+            error: "config file is not valid JSON — fix or remove it first",
+        };
+    }
+    if (!isPlainObject(parsed))
+        return {
+            ok: false,
+            error: "config file is not a JSON object — fix or remove it first",
+        };
+    return { ok: true, raw: parsed };
+}
+
+function writeAtomic(path: string, text: string): SaveResult {
     const tmp = `${path}.${process.pid}.tmp`;
     try {
-        writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
+        writeFileSync(tmp, text);
         renameSync(tmp, path);
         return { ok: true };
     } catch (err) {
@@ -798,4 +749,60 @@ export function saveBinding(
         }
         return { ok: false, error: describe(err) };
     }
+}
+
+/**
+ * Merge `next` over the raw file. Omitted fields and unknown keys survive;
+ * a provided `bindings` replaces, it is not deep-merged. Creates the parent
+ * directory when absent. Never overwrites a corrupt or non-object file.
+ */
+export function saveConfig(
+    next: Partial<LeaderConfig>,
+    path: string = CONFIG_PATH,
+): SaveResult {
+    const read = readRaw(path);
+    if (!read.ok) return read;
+    try {
+        mkdirSync(dirname(path), { recursive: true });
+    } catch (err) {
+        return { ok: false, error: describe(err) };
+    }
+    return writeAtomic(
+        path,
+        JSON.stringify({ ...read.raw, ...next }, null, 2) + "\n",
+    );
+}
+
+/**
+ * Merge one binding into the config file on disk: read → merge → write.
+ *
+ * The merge is done against the RAW parsed file, not the normalized
+ * config, so fields this version doesn't model (and bindings it can't
+ * parse) survive a save instead of being silently deleted. Never
+ * overwrites a corrupt or non-object file.
+ */
+export function saveBinding(
+    seq: string,
+    binding: BindingAction,
+    path: string = CONFIG_PATH,
+): SaveResult {
+    const read = readRaw(path);
+    if (!read.ok) return read;
+    const existing = isPlainObject(read.raw.bindings) ? read.raw.bindings : {};
+    return writeAtomic(
+        path,
+        JSON.stringify(
+            {
+                ...read.raw,
+                // Object.fromEntries defines keys instead of assigning them, so a
+                // sequence named `__proto__` stays an ordinary binding.
+                bindings: Object.fromEntries([
+                    ...Object.entries(existing),
+                    [seq, binding],
+                ]),
+            },
+            null,
+            2,
+        ) + "\n",
+    );
 }

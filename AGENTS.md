@@ -4,7 +4,7 @@ Press the leader key (default `ctrl+space`), then tap a short key sequence to tr
 
 ## Config
 
-`~/.pi/agent/leader-key.json` — created with blank defaults on first startup and never overwritten once it exists; it lives outside the package so it survives `pi update`.
+`~/.pi/agent/leader-key.json` — written by the first-run wizard, never overwritten once it exists; it lives outside the package so it survives `pi update`.
 
 ```jsonc
 {
@@ -12,11 +12,15 @@ Press the leader key (default `ctrl+space`), then tap a short key sequence to tr
   // Restart pi after changing it — the shortcut registers once at startup.
   "leaderKey": "ctrl+space",
 
-  // How long leader mode stays active before timing out (default: 3600)
-  "leaderTimeoutMs": 3600,
+  // How long leader mode stays armed after the leader key (default: 1000).
+  // Vim's `timeoutlen` default. The indicator shows leader mode is armed,
+  // so this can stay short.
+  "leaderTimeoutMs": 1000,
 
-  // Max wait between keystrokes in a multi-key sequence (default: 750)
-  "sequenceTimeoutMs": 750,
+  // Max wait between keystrokes in a multi-key sequence (default: 400).
+  // Also the delay before a prefix binding fires, which is why it is not
+  // shorter — see "Sequences" below.
+  "sequenceTimeoutMs": 400,
 
   // Visual indicator during leader mode (default: "grayedOut").
   // "grayedOut" — gray the mounted editor (pi's own or a custom one);
@@ -35,7 +39,7 @@ Press the leader key (default `ctrl+space`), then tap a short key sequence to tr
 }
 ```
 
-An empty `bindings` object is the shipped state: pressing the leader key warns "No leader bindings configured" until you add some.
+The wizard's starter state is one binding, `r` → `/reload`, so a fresh config is immediately useful. A config with no bindings at all — hand-emptied, or written before 1.4.0 — warns "No leader bindings configured" when the leader key is pressed.
 
 ### Binding types
 
@@ -49,9 +53,15 @@ Wizard specifics (`/leader-bind`): command values must start with `/`; sequences
 
 ### Sequences
 
-Keys are printable ASCII: a single key (`"c"`) or multi-key (`"gs"`). Escape cancels leader mode; non-printable keys during leader mode are ignored.
+A sequence is one or more keys typed in order after the leader key: `"c"` or `"gs"`.
 
-A sequence that is also a prefix of another binding waits `sequenceTimeoutMs` for the next key: with both `"g"` and `"gs"` bound, leader+`g` waits briefly for `s` before firing `"g"`.
+- Each character must be printable ASCII — codes 32–126, so `!` through `~`. No unicode, no function keys.
+- Whitespace is rejected anywhere in the sequence, which includes the space bar.
+- Matching is case-sensitive and exact: `"g"` and `"G"` are different bindings.
+- There is no length cap. There is also no reason to go past three — a longer one is slower to type and no easier to recall.
+- Escape cancels leader mode. Any other non-printable key is ignored rather than treated as part of a sequence.
+
+A sequence that is also a prefix of another binding waits `sequenceTimeoutMs` for the next key: with both `"g"` and `"gs"` bound, leader+`g` waits briefly for `s` before firing `"g"`. That is why `sequenceTimeoutMs` is not as short as it could be — it is a decision window, not just a typing gap.
 
 ## Adding bindings
 
@@ -73,7 +83,10 @@ list:
 
 Test command and dev-install workflow: README, "Development". Facts the README doesn't carry:
 
-- Config bootstrap (`ensureConfig()` in logic.ts, runs at extension load): missing file → writes defaults; existing file (even an invalid one) → never touched; write failure → in-memory defaults, extension keeps working.
+- Config bootstrap: **gone as of 1.4.0**. `ensureConfig()` used to write a blank config on first load; it is deleted, along with `defaultConfigJson()` and `EnsureConfigResult`. Nothing writes to disk until the user confirms the wizard. The trigger branches on `loadConfig().error === "missing"`, NOT on `bindings.length === 0` — a deliberately hand-emptied config keeps the old "No leader bindings configured." warning.
+- Testing the setup wizard: `CONFIG_PATH` is `join(homedir(), ...)` evaluated once at module load, so `__tests__/setup-wizard.test.ts` sets `process.env.HOME` to a temp dir **before** the dynamic `await import("../wizard.ts")`. Do not add an env seam to `logic.ts` to make this easier — `$HOME` already does it, and the import has to stay dynamic.
+- `sequenceTimeoutMs` does **double duty**: the gap between keys in a sequence *and* the prefix-disambiguation delay. With `g`, `t`, `w`, `o`, `v` all carrying several bindings, dropping it toward vim's 100ms `ttimeoutlen` fires premature bindings. `leaderTimeoutMs` has no such constraint — the grayed-out editor already shows leader mode is armed, which is why it matches vim's 1000ms `timeoutlen`.
+- `ask()` in `wizard.ts` treats an empty submit as "keep the default" and names the default in the placeholder. `ctx.ui.input` returns `string | undefined`, so `undefined` is cancel and `""` is an empty submit — that distinction is the whole contract, don't collapse it.
 - Keep `logic.ts` free of pi imports — the test suite loads it standalone under tsx, where `@earendil-works/pi-*` don't resolve. The peers are declared in `package.json` and resolved by pi at runtime.
 - TUI components split across the peers: containers/widgets (`Container`, `Text`, `SelectList`, `Editor`, `fuzzyFilter`, …) come from `@earendil-works/pi-tui`; chrome (`DynamicBorder`) comes from `@earendil-works/pi-coding-agent`. The LSP cannot resolve the peers, so a wrong-package import looks clean — verify exports with `node --input-type=module -e "console.log(typeof (await import('PKG')).NAME)"`.
 - Leader mode never swaps the editor out. `ui.custom()` without `overlay: true` replaces the editor container, so the capture overlay renders `tui.getFocusedComponent()` itself (`focusedEditor()` in `logic.ts`) — that is both why the mounted editor has to be captured *inside* the overlay factory and why graying it needs no `setEditorComponent`. `getFocusedComponent()` is declared on pi-tui's abstract `TuiBase`, not on the `TUI` interface pi types the handle as, hence the guarded lookup.
@@ -81,5 +94,7 @@ Test command and dev-install workflow: README, "Development". Facts the README d
 - `borderColor` cannot simply be assigned: it may be an own field, a prototype method, or a getter with no setter, and the wrong write throws out of `render()`. `borderAccess()` classifies it and the write is skipped for anything read-only — the lines still gray, only the border stays. Do not "simplify" that away.
 - The capture overlay takes focus while it is up (that is what keeps the sequence keys from reaching the editor), so a text cursor blinks out for the duration. The editor's text, keybindings, and undo history are untouched. This is the accepted cost of not replacing the editor.
 - The command step is two keys: tab fills the highlighted match into the query line (`makeCommandPicker`'s `onComplete`, default `setQuery("/"+value)`) and stays put; enter runs `acceptCommand()`, which takes `splitCommandLine(query)` (logic.ts) — a full `/name [args]` line verbatim, otherwise the picker's highlighted match via `selectedValue()` — and moves to the args step. Re-reading a name-only query as a command produced "command must start with /" for text the picker had just filtered down to a single match. SelectList only knows enter, so the tab branch is written out by hand, and multi-character input is ignored (an editor does not take a pasted chunk here). Nothing in the wizard ever *runs* the command it picks — it only fills the args step. Reading a name-only query as a command produced "command must start with /" for text the picker had just filtered down to a single match — the regression came from tightening that check in a fix set, not from pi. SelectList only knows enter, so the picker's tab branch is written out by hand.
+- Build UI from pi's own dialogs first: `ctx.ui.input()` / `ctx.ui.select()` / `ctx.ui.confirm()`, all returning `undefined`/`false` on cancel, all with `{signal?, timeout?}` options. `ctx.ui.custom()` is for interactions that need their own rendering or input — `docs/extensions.md` says "Use `ctx.ui.custom()` only when the interaction needs its own rendering and input." Dialogs also work over RPC, custom components do not. `runSetupWizard()` is four dialogs and a save; an earlier hand-rolled Container/DynamicBorder/SelectList version was ~250 lines that should not have existed.
+- `runSetupWizard(ctx, activeKey)`: `activeKey` is the key pi registered at load, **not** the key just chosen. The new key has no shortcut until the reload lands, so the closing notice must name the one the user can actually press. It rides the `r` → `/reload` starter binding rather than calling `ctx.reload()` directly, so the wizard never touches a ctx that a reload may have invalidated.
 - `leaderIndicator()` in `logic.ts` owns the show-grayed-vs-show-LEADER decision so it is testable without a TUI; the warning about a missing editor is once per extension load, not per session — pi's `session_shutdown` reason enum has no "extension unloaded" case. `session_start` clears the in-flight capture, because a session switch can drop an overlay without resolving it.
 - `__tests__/editor-integration.test.ts` drives pi's real `TuiMainScreen` and `CustomEditor` (the peers are peerDependencies, so a missing peer skips instead of failing). `logic.test.ts` cannot catch a shape mismatch with what pi actually mounts — that file is what catches it.

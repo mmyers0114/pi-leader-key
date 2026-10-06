@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.0] - 2026-10-05
+
+### Added
+
+- **First-run setup wizard.** With no config file present, the first leader-key press opens a short wizard — leader key, `leaderTimeoutMs`, `sequenceTimeoutMs`, indicator style — and writes the config on confirm with a starter `r` → `/reload` binding. Nothing touches disk until then; cancelling any step writes nothing. The closing notice names the leader key that is live *right now*, since the newly chosen one only registers on the reload.
+- `saveConfig()` in `logic.ts`, merging over the raw file so unknown keys and unrecognized bindings survive. `runBindingWizard` now writes through it; saving was already atomic.
+- A README section stating the actual sequence grammar — printable ASCII (32–126), no whitespace, case-sensitive, no length cap — instead of leaving the only specification to the error you get for trying an invalid one.
+- `__tests__/setup-wizard.test.ts`: 8 checks over the first-run wizard, covering keep-the-default, re-ask on bad input, and that nothing is written unless the confirm is accepted. It redirects `HOME` before importing so the wizard can be tested without a seam in production code.
+
+### Changed
+
+- **Defaults retuned, with a shorter leash.** `leaderTimeoutMs` `3600` → `1000` (vim's `timeoutlen` default; the indicator shows leader mode is armed, so the wait can afford to be short) and `sequenceTimeoutMs` `750` → `400`. The sequence value does double duty as the prefix-disambiguation delay — with `g`, `t`, `w`, `o`, and `v` all carrying several bindings, it cannot go as low as vim's 100ms `ttimeoutlen` without firing premature bindings. Existing configs keep whatever they already had; only new ones get these.
+- **Every wizard field offers its default explicitly.** An empty submit keeps the default, and the placeholder names the value and says enter keeps it — so accepting a default is a choice rather than a prefilled box you have to clear. The indicator step marks the shipped default, derived from `DEFAULT_CONFIG.editorEffect` so the marker cannot rot.
+
+- Setup UI is built from pi's own `ctx.ui.input()` / `select()` / `confirm()` dialogs instead of a custom component. They work over RPC, where a custom component cannot, and the interaction needed no custom rendering.
+- The leader-indicator teardown no longer touches an invalidated `ctx` after a reload-triggering dispatch, which removes a `Shortcut handler error:` toast when the `r` → `/reload` binding fired.
+
+### Removed
+
+- `ensureConfig()`, `defaultConfigJson()`, and `EnsureConfigResult`. The blank config is no longer written on first startup — that is the wizard's job now. An existing config file, valid or not, is still never touched.
+
 ## [1.3.0] - 2026-10-04
 
 ### Added

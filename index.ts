@@ -27,8 +27,8 @@
  *
  * {
  *   "leaderKey": "ctrl+space",
- *   "leaderTimeoutMs": 3600,
- *   "sequenceTimeoutMs": 750,
+ *   "leaderTimeoutMs": 1000,
+ *   "sequenceTimeoutMs": 400,
  *   "editorEffect": "grayedOut",
  *   "bindings": {
  *     "c":  { "action": "compact" },
@@ -82,7 +82,6 @@ import {
     capOutput,
     CONFIG_PATH,
     dispatchPlan,
-    ensureConfig,
     focusedEditor,
     isMountedEditor,
     isPrintableKey,
@@ -94,7 +93,11 @@ import {
     type LeaderConfig,
     type MountedEditor,
 } from "./logic.ts";
-import { makeCommandPicker, runBindingWizard } from "./wizard.ts";
+import {
+    makeCommandPicker,
+    runBindingWizard,
+    runSetupWizard,
+} from "./wizard.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -116,9 +119,6 @@ function resetTimer(
 
 export default function (pi: ExtensionAPI) {
     const { config } = loadConfig();
-    // First run in this install: write a blank config to edit. Guarded —
-    // never overwrites an existing file; failure falls back to defaults.
-    ensureConfig();
 
     // ------------------------------------------------------------------
     // State
@@ -569,7 +569,15 @@ export default function (pi: ExtensionAPI) {
 
             capturing = true;
             try {
-                const { config: current } = loadConfig();
+                const { config: current, error } = loadConfig();
+                // No config file yet: first run in this install, so set
+                // the config up before anything can dispatch. `config` is
+                // what pi registered the shortcut with, so it is the key
+                // the user can actually press right now.
+                if (error === "missing") {
+                    await runSetupWizard(ctx, config.leaderKey);
+                    return;
+                }
                 if (Object.keys(current.bindings).length === 0) {
                     ctx.ui.notify("No leader bindings configured.", "warning");
                     return;
@@ -579,8 +587,11 @@ export default function (pi: ExtensionAPI) {
                 // grayed; when there is no editor to gray it puts up the
                 // LEADER status line itself.
 
+                // Declared out here so the finally below can tell whether the dispatch
+                // that ran was a reload.
+                let result: string | null = null;
                 try {
-                    const result = await runEffectCapture(ctx, current);
+                    result = await runEffectCapture(ctx, current);
                     if (typeof result === "string")
                         await dispatchBinding(ctx, current, result);
                 } finally {
@@ -588,7 +599,22 @@ export default function (pi: ExtensionAPI) {
                     // press recaptures both, and a throw in the overlay or
                     // the dispatch must not leave LEADER on screen.
                     activeEditor = null;
-                    ctx.ui.setStatus("leader", undefined);
+                    // Dispatching `r` → `/reload` invalidates `ctx` — pi's
+                    // runner warns: "This extension ctx is stale after
+                    // session replacement or reload. Do not use a captured
+                    // pi or command ctx after ctx.reload()." The whole UI is
+                    // being torn down as it goes, so there is nothing to
+                    // clear, and touching `ctx` here would only raise an
+                    // error toast over the reload it was clearing for.
+                    const bound =
+                        typeof result === "string"
+                            ? current.bindings[result]
+                            : undefined;
+                    const reloading =
+                        bound !== undefined &&
+                        "command" in bound &&
+                        bound.command === "/reload";
+                    if (!reloading) ctx.ui.setStatus("leader", undefined);
                 }
             } finally {
                 capturing = false;

@@ -8,7 +8,7 @@ Press the leader key (default `ctrl+space`), then tap a short key sequence to ru
 - **Leader key with multi-key sequences** — `gs` for git status, `m` for the model picker, whatever you like
 - **Bind any slash command** — including commands contributed by other extensions, prompt templates, and skills
 - **Three binding types** — slash commands (with arguments), built-in actions, shell one-liners
-- **Interactive setup** — `/leader-bind` wizard and `/find-commands` discovery picker, no JSON hand-editing required
+- **Interactive setup** — a first-run wizard, then `/leader-bind` and `/find-commands`, no JSON hand-editing required
 - **Safe config** — survives package updates, never overwrites your file, refuses to clobber corrupt configs
 
 ## Why this exists
@@ -25,9 +25,42 @@ pi install npm:pi-leader-key
 pi install git:github.com/mmyers0114/pi-leader-key@v1.2.0
 ```
 
-On first startup a blank config is written to `~/.pi/agent/leader-key.json` (outside the package directory, so it survives updates). Add bindings by hand or run `/leader-bind`.
+The first time you press the leader key, a short setup wizard asks for the leader key, both timeouts, and the indicator style, then writes `~/.pi/agent/leader-key.json` (outside the package directory, so it survives updates) with a starter `r` → `/reload` binding. Nothing is written to disk until you confirm. It ends by telling you to press the leader key again and hit `r` — the new key is not live until that reload lands.
+
+Add more bindings any time with `/leader-bind`.
+
+## First run
+
+Press the leader key (`ctrl+space`) with no config file present and a setup wizard opens. It asks four things, then shows a summary to confirm:
+
+| Step | Asked for |
+| --- | --- |
+| 1 | Leader key — press enter to keep `ctrl+space`, or type another combination; re-asks on an unmatchable one |
+| 2 | `leaderTimeoutMs` — press enter to keep `1000`, or type another number |
+| 3 | `sequenceTimeoutMs` — press enter to keep `400`, or type another number |
+| 4 | Indicator — `grayedOut` or `none`, with the default marked |
+
+Every step offers its default explicitly: the placeholder names the value and says enter keeps it, so accepting a default is a choice you make rather than a prefilled box you have to clear.
+
+Confirming writes `~/.pi/agent/leader-key.json` with those four settings plus one starter binding, `r` → `/reload`:
+
+```jsonc
+{
+  "leaderKey": "ctrl+space",
+  "leaderTimeoutMs": 1000,
+  "sequenceTimeoutMs": 400,
+  "editorEffect": "grayedOut",
+  "bindings": {
+    "r": { "command": "/reload" }
+  }
+}
+```
+
+Nothing touches the disk until you confirm, and cancelling or escaping any step writes nothing. The wizard ends by telling you to press the leader key again and hit `r`: **the key you just chose is not live yet** — pi registers the shortcut once at startup, so `/reload` is what puts it in place.
 
 ## Quick start
+
+After the wizard (or by hand):
 
 ```jsonc
 // ~/.pi/agent/leader-key.json
@@ -44,7 +77,7 @@ On first startup a blank config is written to `~/.pi/agent/leader-key.json` (out
 Press `ctrl+space`, then `gs` — the shell command runs and its output appears as a notification. Press `ctrl+space`, then `m` — the model picker opens as if you had typed `/model`.
 
 > [!NOTE]
-> Restart pi after changing `leaderKey` — the shortcut registers once at startup. Every other setting applies on your next leader press.
+> A new `leaderKey` only takes effect after a reload — pi registers the shortcut once at startup. Run `/reload` (or the wizard's starter `r` binding). Every other setting applies on your next leader press.
 
 ## Bind any slash command
 
@@ -95,10 +128,10 @@ Walks you through a binding in one overlay: pick a type (`command` / `action` / 
 | Key | Default | Description |
 | --- | ------- | ----------- |
 | `leaderKey` | `"ctrl+space"` | Combination that activates leader mode. Restart pi after changing it. |
-| `leaderTimeoutMs` | `3600` | How long leader mode stays active before timing out. |
-| `sequenceTimeoutMs` | `750` | Max wait between keystrokes in a multi-key sequence. Also the delay before a prefix binding fires (see below). |
+| `leaderTimeoutMs` | `1000` | How long leader mode stays armed after the leader key, in milliseconds. Matches vim's `timeoutlen` default; the indicator shows you it is armed, so the wait can stay short. |
+| `sequenceTimeoutMs` | `400` | Max wait between keystrokes in a multi-key sequence, in milliseconds. Also the delay before a prefix binding fires (see below), which is why it is not shorter. |
 | `editorEffect` | `"grayedOut"` | Visual indicator while leader mode is active: `"grayedOut"` grays out whichever editor is mounted — pi's own or a custom one — and falls back to a static `LEADER` status when no editor has focus. `"none"` always shows the `LEADER` status. |
-| `bindings` | `{}` | Sequence → binding. Empty by default; the leader key warns until you add some. |
+| `bindings` | `{}` | Sequence → binding. Empty means the leader key warns until you add some. |
 
 Invalid values fall back to defaults, and malformed binding entries are ignored — a typo in one binding can't break the rest.
 
@@ -116,9 +149,20 @@ Invalid values fall back to defaults, and malformed binding entries are ignored 
 
 ### Sequences
 
-Keys are printable ASCII: single (`"c"`) or multi-key (`"gs"`). Escape cancels leader mode; non-printable keys are ignored.
+A sequence is one or more keys typed in order after the leader key: `"c"` or `"gs"`.
 
-A sequence that is also a prefix of a longer binding waits `sequenceTimeoutMs` for the next key: with both `"g"` and `"gs"` bound, leader + `g` pauses briefly for `s` before firing `"g"`.
+The rules, which the wizards and `validateSequence()` enforce:
+
+| Rule | Detail |
+| ---- | ------ |
+| Characters | Each must be printable ASCII — codes 32–126, so `!` through `~`. No unicode, no function keys. |
+| Whitespace | Rejected anywhere in the sequence, which includes the space bar. The wizards trim the ends before saving, but `loadConfig` does not rewrite a hand-written key — `" gs "` in the file is a binding that can never match. |
+| Length | No hard limit. There is no reason to go past three; a longer one is slower to type and no easier to recall. |
+| Case | Case-sensitive and exact. `"g"` and `"G"` are different bindings. |
+
+Escape cancels leader mode. Any other non-printable key — an arrow, a function key — is ignored rather than treated as part of a sequence.
+
+A sequence that is also a prefix of a longer binding waits `sequenceTimeoutMs` for the next key: with both `"g"` and `"gs"` bound, leader + `g` pauses briefly for `s` before firing `"g"`. The wizards treat exact and prefix overlaps in either direction as conflicts and ask before overwriting.
 
 ## Development
 

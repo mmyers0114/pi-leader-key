@@ -18,15 +18,21 @@ import {
 import {
     buildCommandMenu,
     composeCommand,
+    DEFAULT_CONFIG,
     findConflicts,
     isPrintableKey,
     isProperPrefix,
     loadConfig,
+    positiveMs,
     saveBinding,
+    saveConfig,
     splitCommandLine,
+    validateEditorEffect,
+    validateLeaderKey,
     validateSequence,
     type BindingAction,
     type CommandMenuEntry,
+    type EditorEffect,
     type PiCommand,
 } from "./logic.ts";
 
@@ -641,4 +647,145 @@ export async function runBindingWizard(
         };
         return overlay;
     });
+}
+// ---------------------------------------------------------------------------
+// First-run setup wizard
+// ---------------------------------------------------------------------------
+
+/** validateLeaderKey's error codes, worded as something worth re-reading. */
+const LEADER_KEY_HELP: Record<string, string> = {
+    empty: "needs a modifier and a key, e.g. ctrl+space",
+    "bad-modifier": "unknown modifier — try ctrl, alt, shift, or meta",
+    "bad-key": "unknown key",
+};
+
+const EFFECT_OPTIONS: Record<EditorEffect, string> = {
+    grayedOut: "grayedOut — gray the editor while leader mode is on",
+    none: "none — always show the LEADER status line",
+};
+
+/**
+ * Appends "(default)" to whichever effect matches the shipped default, so the
+ * marker follows `DEFAULT_CONFIG.editorEffect` instead of rotting beside it.
+ */
+const effectLabel = (key: EditorEffect) =>
+    key === DEFAULT_CONFIG.editorEffect
+        ? `${EFFECT_OPTIONS[key]}  (default)`
+        : EFFECT_OPTIONS[key];
+
+/**
+ * First-run setup: leader key, both timeouts, indicator, then one write of
+ * the whole config with the starter `r` → `/reload` binding.
+ *
+ * Built from pi's own dialogs (`ui.input` / `ui.select` / `ui.confirm`)
+ * instead of `ui.custom`: the interaction is plain prompts, so it needs no
+ * rendering or input of its own — and dialogs also work over RPC, where a
+ * custom component cannot. Cancelling any step writes nothing.
+ *
+ * `activeKey` is the key pi registered at load, NOT the key just chosen:
+ * the new one has no shortcut until the reload lands, so the closing notice
+ * has to name the one the user can actually press.
+ */
+export async function runSetupWizard(
+    ctx: ExtensionContext,
+    activeKey: string,
+): Promise<boolean> {
+    const base = loadConfig().config;
+
+    /**
+     * Re-asks until the text parses, or the user cancels (null). An empty
+     * submit is an explicit "keep the default": the fallback is named in the
+     * placeholder, so the choice is offered rather than implied by a prefilled
+     * box the user has to clear.
+     */
+    const ask = async (
+        title: string,
+        fallback: string,
+        hint: string,
+        check: (raw: string) => string | null,
+    ): Promise<string | null> => {
+        for (;;) {
+            const raw = await ctx.ui.input(title, `${fallback} — ${hint}`);
+            if (raw === undefined) return null;
+            const text = raw.trim();
+            if (text === "") return fallback;
+            const problem = check(text);
+            if (problem === null) return text;
+            ctx.ui.notify(problem, "warning");
+        }
+    };
+
+    const askMs = (title: string, fallback: string, hint: string) =>
+        ask(title, fallback, hint, (raw) =>
+            positiveMs(Number(raw), -1) === -1
+                ? "enter a positive number of milliseconds"
+                : null,
+        );
+
+    const leaderKey = await ask(
+        "Leader key setup — leader key",
+        base.leaderKey,
+        "enter to keep it, or type a combination like ctrl+space",
+        (raw) => {
+            const code = validateLeaderKey(raw);
+            return code === null ? null : (LEADER_KEY_HELP[code] ?? code);
+        },
+    );
+    if (leaderKey === null) return false;
+
+    const leaderTimeout = await askMs(
+        "Leader key setup — leader timeout (ms)",
+        String(base.leaderTimeoutMs),
+        "enter to keep it — how long leader mode stays armed",
+    );
+    if (leaderTimeout === null) return false;
+
+    const sequenceTimeout = await askMs(
+        "Leader key setup — sequence timeout (ms)",
+        String(base.sequenceTimeoutMs),
+        "enter to keep it — the gap between keys in a sequence",
+    );
+    if (sequenceTimeout === null) return false;
+
+    const leaderTimeoutMs = positiveMs(Number(leaderTimeout), -1);
+    const sequenceTimeoutMs = positiveMs(Number(sequenceTimeout), -1);
+
+    const effects = Object.keys(EFFECT_OPTIONS) as EditorEffect[];
+    const effect = await ctx.ui.select(
+        "Leader key setup — indicator",
+        effects.map(effectLabel),
+    );
+    if (effect === undefined) return false;
+    const editorEffect = validateEditorEffect(
+        effects.find((key) => effectLabel(key) === effect),
+    );
+
+    const ok = await ctx.ui.confirm(
+        "Leader key setup — confirm",
+        [
+            `leader key        ${leaderKey}`,
+            `leader timeout    ${leaderTimeoutMs} ms`,
+            `sequence timeout  ${sequenceTimeoutMs} ms`,
+            `indicator         ${editorEffect}`,
+            `bindings          r → /reload`,
+        ].join("\n"),
+    );
+    if (!ok) return false;
+
+    const result = saveConfig({
+        leaderKey: leaderKey.toLowerCase(),
+        leaderTimeoutMs,
+        sequenceTimeoutMs,
+        editorEffect,
+        bindings: { r: { command: "/reload" } },
+    });
+    if (!result.ok) {
+        ctx.ui.notify(`Setup failed: ${result.error}`, "error");
+        return false;
+    }
+    ctx.ui.notify(
+        `Saved. Press ${activeKey}, then r, to reload and use it.`,
+        "info",
+    );
+    return true;
 }

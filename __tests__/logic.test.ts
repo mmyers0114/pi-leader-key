@@ -23,8 +23,6 @@ import { join } from "node:path";
 import {
     DEFAULT_CONFIG,
     buildCommandMenu,
-    defaultConfigJson,
-    ensureConfig,
     composeCommand,
     isBindingAction,
     isProperPrefix,
@@ -43,6 +41,9 @@ import {
     mergeBinding,
     shouldRestoreDraft,
     saveBinding,
+    saveConfig,
+    positiveMs,
+    validateEditorEffect,
     splitCommandLine,
     validateSequence,
     type PiCommand,
@@ -718,7 +719,7 @@ section("Config loading");
     assertEq(r3.config.leaderKey, "ctrl+space", "missing leaderKey => default");
     assertEq(
         r3.config.leaderTimeoutMs,
-        3600,
+        DEFAULT_CONFIG.leaderTimeoutMs,
         "missing leaderTimeoutMs => default",
     );
     assert("x" in r3.config.bindings, "partial config bindings preserved");
@@ -799,60 +800,6 @@ section("Config loading");
         {},
         "valid empty config => empty bindings",
     );
-}
-
-// ---------------------------------------------------------------------------
-// ensureConfig — first-run blank config (guarded)
-// ---------------------------------------------------------------------------
-
-section("ensureConfig");
-
-const ENSURE_PATH = join(CONFIG_DIR, "ensure-leader-key.json");
-
-{
-    // Missing file => created with blank defaults
-    const r = ensureConfig(ENSURE_PATH);
-    assertEq(r, "created", "missing file => created");
-    const written = JSON.parse(readFileSync(ENSURE_PATH, "utf-8"));
-    assertEq(written, DEFAULT_CONFIG, "written content is blank defaults");
-    assertEq(written.bindings, {}, "written bindings are empty");
-
-    // Second call => exists, file untouched
-    assertEq(ensureConfig(ENSURE_PATH), "exists", "existing file => exists");
-    assertEq(
-        JSON.parse(readFileSync(ENSURE_PATH, "utf-8")),
-        DEFAULT_CONFIG,
-        "second call left content unchanged",
-    );
-
-    // Existing invalid file => exists, never clobbered
-    writeFileSync(ENSURE_PATH, "garbage {{{");
-    assertEq(
-        ensureConfig(ENSURE_PATH),
-        "exists",
-        "invalid existing file => exists",
-    );
-    assertEq(
-        readFileSync(ENSURE_PATH, "utf-8"),
-        "garbage {{{",
-        "invalid file content untouched",
-    );
-
-    // Unwritable location (missing parent dir) => error, no throw
-    assertEq(
-        ensureConfig(join(CONFIG_DIR, "nope", "x.json")),
-        "error",
-        "unwritable path => error",
-    );
-
-    // Template is valid JSON on its own
-    assertEq(
-        JSON.parse(defaultConfigJson()),
-        DEFAULT_CONFIG,
-        "template parses",
-    );
-
-    rmSync(ENSURE_PATH);
 }
 
 {
@@ -1029,6 +976,132 @@ section("saveBinding");
     assertEq(r5.ok, false, "unwritable path reports failure");
 
     unlinkSync(SAVE_PATH);
+}
+
+// ---------------------------------------------------------------------------
+// positiveMs + validateEditorEffect (setup wizard — field validation)
+// ---------------------------------------------------------------------------
+
+section("positiveMs");
+
+assertEq(positiveMs(1500, 9), 1500, "finite positive number passes");
+assertEq(positiveMs(0, 9), 9, "zero falls back");
+assertEq(positiveMs(-1, 9), 9, "negative falls back");
+assertEq(positiveMs("nope", 9), 9, "non-numeric string falls back");
+assertEq(positiveMs("2000", 9), 9, "numeric string falls back — wizard parses with Number() first");
+assertEq(positiveMs(Number(" 400 "), 9), 400, "Number() then positiveMs accepts trimmed text");
+
+section("validateEditorEffect");
+
+assertEq(validateEditorEffect("none"), "none", "none accepted");
+assertEq(validateEditorEffect("grayedOut"), "grayedOut", "grayedOut accepted");
+assertEq(validateEditorEffect("spinner"), "grayedOut", "legacy spinner coerces");
+assertEq(validateEditorEffect("nope"), "grayedOut", "unknown falls back to default");
+assertEq(validateEditorEffect(undefined), "grayedOut", "missing falls back to default");
+
+// ---------------------------------------------------------------------------
+// saveConfig (setup wizard — config persistence)
+// ---------------------------------------------------------------------------
+
+section("saveConfig");
+
+{
+    const SAVE_PATH = join(CONFIG_DIR, "save-config.json");
+    if (existsSync(SAVE_PATH)) unlinkSync(SAVE_PATH);
+
+    const starter = {
+        leaderKey: "ctrl+g",
+        leaderTimeoutMs: 2000,
+        sequenceTimeoutMs: 400,
+        editorEffect: "none" as const,
+        bindings: { r: { command: "/reload" } },
+    };
+    const r1 = saveConfig(starter, SAVE_PATH);
+    assertEq(r1.ok, true, "missing-file save succeeds");
+    assertEq(
+        JSON.parse(readFileSync(SAVE_PATH, "utf-8")),
+        starter,
+        "writes all four fields plus the starter binding",
+    );
+
+    // Merge over the raw file: omitted fields and unknown keys survive,
+    // and existing key order is kept (new keys append).
+    const ordered = {
+        zCustom: 1,
+        leaderKey: "ctrl+b",
+        bindings: { c: { action: "compact" } },
+        editorEffect: "none",
+    };
+    writeFileSync(SAVE_PATH, JSON.stringify(ordered, null, 2) + "\n");
+    const patch = {
+        leaderTimeoutMs: 1000,
+        sequenceTimeoutMs: 200,
+        bindings: { r: { command: "/reload" } },
+    };
+    const snapshot = JSON.parse(JSON.stringify(patch));
+    const r2 = saveConfig(patch, SAVE_PATH);
+    assertEq(r2.ok, true, "merge save succeeds");
+    assertEq(patch, snapshot, "input is not mutated");
+    const merged = JSON.parse(readFileSync(SAVE_PATH, "utf-8"));
+    assertEq(
+        Object.keys(merged),
+        [
+            "zCustom",
+            "leaderKey",
+            "bindings",
+            "editorEffect",
+            "leaderTimeoutMs",
+            "sequenceTimeoutMs",
+        ],
+        "existing key order kept, new keys appended",
+    );
+    assertEq(merged.zCustom, 1, "unknown key preserved");
+    assertEq(merged.leaderKey, "ctrl+b", "omitted field preserved");
+    assertEq(
+        merged.bindings,
+        { r: { command: "/reload" } },
+        "provided bindings replace, they are not deep-merged",
+    );
+
+    const corrupt = "{ not json";
+    writeFileSync(SAVE_PATH, corrupt);
+    const r3 = saveConfig({ leaderKey: "ctrl+g" }, SAVE_PATH);
+    assertEq(r3.ok, false, "corrupt config refuses to save");
+    assertEq(readFileSync(SAVE_PATH, "utf-8"), corrupt, "corrupt file untouched");
+
+    writeFileSync(SAVE_PATH, "[1, 2]");
+    const r4 = saveConfig({ leaderKey: "ctrl+g" }, SAVE_PATH);
+    assertEq(r4.ok, false, "non-object config refuses to save");
+    assertEq(readFileSync(SAVE_PATH, "utf-8"), "[1, 2]", "non-object file untouched");
+
+    const nested = join(CONFIG_DIR, "save-config-nested", "x.json");
+    const r5 = saveConfig({ leaderKey: "ctrl+g" }, nested);
+    assertEq(r5.ok, true, "missing parent directory is created");
+    assertEq(
+        JSON.parse(readFileSync(nested, "utf-8")).leaderKey,
+        "ctrl+g",
+        "wrote into the created directory",
+    );
+
+    const atomicDir = join(CONFIG_DIR, "save-config-atomic");
+    mkdirSync(atomicDir, { recursive: true });
+    const atomicPath = join(atomicDir, "c.json");
+    const r6 = saveConfig({ leaderKey: "ctrl+g" }, atomicPath);
+    assertEq(r6.ok, true, "atomic save succeeds");
+    assertEq(
+        readdirSync(atomicDir).filter((name) => name.includes(".tmp")),
+        [],
+        "no temp file left after a successful save",
+    );
+    assertEq(
+        readdirSync(CONFIG_DIR).filter((name) => name.includes(".tmp")),
+        [],
+        "no temp file left after a refused save",
+    );
+
+    unlinkSync(SAVE_PATH);
+    rmSync(join(CONFIG_DIR, "save-config-nested"), { recursive: true });
+    rmSync(atomicDir, { recursive: true });
 }
 
 // ---------------------------------------------------------------------------
