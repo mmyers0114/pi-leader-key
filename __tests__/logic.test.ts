@@ -49,6 +49,7 @@ import {
     positiveMs,
     validateEditorEffect,
     splitCommandLine,
+    resolveCommandSelection,
     validateSequence,
     type PiCommand,
     type MountedEditor,
@@ -1963,6 +1964,30 @@ section("splitCommandLine");
         splitCommandLine("/model    "),
         { command: "/model", args: "" },
         "trailing space is not an empty args list",
+    );
+}
+
+section("resolveCommandSelection");
+{
+    assertEq(
+        resolveCommandSelection("", "prompts"),
+        { command: "/prompts", args: "" },
+        "direct picker selection gains its leading slash",
+    );
+    assertEq(
+        resolveCommandSelection("prom", "prompts"),
+        { command: "/prompts", args: "" },
+        "a filtered picker selection gains its leading slash",
+    );
+    assertEq(
+        resolveCommandSelection("/model opus", "prompts"),
+        { command: "/model", args: "opus" },
+        "a typed command and args take precedence over the picker",
+    );
+    assertEq(
+        resolveCommandSelection("", null),
+        null,
+        "an empty query with no picker selection is rejected",
     );
 }
 

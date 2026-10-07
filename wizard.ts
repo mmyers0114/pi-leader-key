@@ -23,11 +23,11 @@ import {
     isPrintableKey,
     isProperPrefix,
     loadConfig,
-    MAX_TIMEOUT_MS,
+MAX_TIMEOUT_MS,
     positiveMs,
+    resolveCommandSelection,
     saveBinding,
     saveConfig,
-    splitCommandLine,
     validateEditorEffect,
     validateLeaderKey,
     validateSequence,
@@ -304,15 +304,17 @@ export async function runBindingWizard(
          * for text the picker had just narrowed to a single match.
          */
         const acceptCommand = () => {
-            const line = splitCommandLine(query);
-            const command = line?.command ?? picker?.selectedValue() ?? null;
-            if (command === null) {
+            const selection = resolveCommandSelection(
+                query,
+                picker?.selectedValue() ?? null,
+            );
+            if (selection === null) {
                 status = "no command matches the filter";
                 refresh();
                 return;
             }
-            commandValue = command;
-            goArgs(line?.args ?? "");
+            commandValue = selection.command;
+            goArgs(selection.args);
         };
 
         let chosenAction: "compact" | "shutdown" | "clearEditor" = "compact";
