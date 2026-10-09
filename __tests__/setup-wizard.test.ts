@@ -125,7 +125,19 @@ suite("setup wizard — invalid input", async (t) => {
         rmSync(CONFIG, { force: true });
         const { ctx, warnings } = mockCtx({ inputs: ["", "soon", "", ""] });
         assert.equal(await mod!.runSetupWizard(ctx as never, "ctrl+space"), true);
-        assert.deepEqual(warnings, ["enter a positive number of milliseconds"]);
+        assert.deepEqual(warnings, [
+            "enter a positive number of milliseconds, at most 2147483647",
+        ]);
+        assert.equal(readConfig().leaderTimeoutMs, 1000);
+    });
+
+    await t.test("rejects a timeout past the 32-bit setTimeout limit, naming the maximum", async () => {
+        rmSync(CONFIG, { force: true });
+        const { ctx, warnings } = mockCtx({ inputs: ["", "3000000000", "", ""] });
+        assert.equal(await mod!.runSetupWizard(ctx as never, "ctrl+space"), true);
+        assert.deepEqual(warnings, [
+            "enter a positive number of milliseconds, at most 2147483647",
+        ]);
         assert.equal(readConfig().leaderTimeoutMs, 1000);
     });
 });

@@ -9,11 +9,15 @@
  */
 
 import {
+    chmodSync,
     existsSync,
+    lstatSync,
     mkdirSync,
     readdirSync,
     readFileSync,
     rmSync,
+    statSync,
+    symlinkSync,
     unlinkSync,
     writeFileSync,
 } from "node:fs";
@@ -991,6 +995,31 @@ assertEq(positiveMs("nope", 9), 9, "non-numeric string falls back");
 assertEq(positiveMs("2000", 9), 9, "numeric string falls back — wizard parses with Number() first");
 assertEq(positiveMs(Number(" 400 "), 9), 400, "Number() then positiveMs accepts trimmed text");
 
+// Node stores setTimeout delays as signed 32-bit, so anything above this
+// overflows and fires after ~1ms instead of at all.
+assertEq(positiveMs(2147483647, 9), 2147483647, "the 32-bit maximum is accepted");
+assertEq(positiveMs(2147483648, 9), 9, "one past the 32-bit maximum falls back");
+assertEq(positiveMs(3e9, 9), 9, "an overflowing delay falls back");
+
+writeFileSync(CONFIG_PATH, JSON.stringify({ leaderTimeoutMs: 3e9, sequenceTimeoutMs: 3e9 }));
+const overLimit = loadConfig(CONFIG_PATH);
+assertEq(
+    overLimit.config.leaderTimeoutMs,
+    DEFAULT_CONFIG.leaderTimeoutMs,
+    "overflowing leaderTimeoutMs => default",
+);
+assertEq(
+    overLimit.config.sequenceTimeoutMs,
+    DEFAULT_CONFIG.sequenceTimeoutMs,
+    "overflowing sequenceTimeoutMs => default",
+);
+assert(
+    overLimit.notes.some((n) => n.includes("2147483647")),
+    `notes name the 32-bit maximum: ${JSON.stringify(overLimit.notes)}`,
+);
+assertEq(overLimit.notes.length, 2, "one note per capped timeout");
+rmSync(CONFIG_PATH, { force: true });
+
 section("validateEditorEffect");
 
 assertEq(validateEditorEffect("none"), "none", "none accepted");
@@ -1100,6 +1129,81 @@ section("saveConfig");
     );
 
     unlinkSync(SAVE_PATH);
+
+    // A dotfile manager (stow, chezmoi) commonly keeps the real file
+    // elsewhere and links to it. Renaming over the link would replace it
+    // with a regular file and orphan the managed copy.
+    section("config: symlinked config file");
+    const managedDir = join(CONFIG_DIR, "managed");
+    mkdirSync(managedDir, { recursive: true });
+    const managed = join(managedDir, "leader-key.json");
+    const link = join(CONFIG_DIR, "linked.json");
+    writeFileSync(managed, JSON.stringify({ leaderKey: "ctrl+b" }) + "\n");
+    symlinkSync(managed, link);
+    assertEq(
+        saveConfig({ leaderKey: "ctrl+g" }, link).ok,
+        true,
+        "save through a symlink succeeds",
+    );
+    assert(lstatSync(link).isSymbolicLink(), "the symlink is still a symlink");
+    assertEq(
+        JSON.parse(readFileSync(managed, "utf-8")).leaderKey,
+        "ctrl+g",
+        "the link's target was updated",
+    );
+    assertEq(
+        saveBinding("gs", { exec: "git status" }, link).ok,
+        true,
+        "saveBinding through a symlink succeeds",
+    );
+    assert(
+        lstatSync(link).isSymbolicLink(),
+        "saveBinding leaves the symlink in place",
+    );
+    assertEq(
+        dispatchPlan(loadConfig(link).config.bindings.gs),
+        { kind: "exec", cmd: "git status" },
+        "saveBinding wrote through to the target",
+    );
+
+    const dangling = join(CONFIG_DIR, "dangling.json");
+    symlinkSync(join(managedDir, "gone.json"), dangling);
+    const danglingResult = saveConfig({ leaderKey: "ctrl+g" }, dangling);
+    assertEq(danglingResult.ok, false, "a dangling symlink is refused");
+    assert(
+        !danglingResult.ok && danglingResult.error.includes("missing file"),
+        `the refusal explains itself: ${danglingResult.ok ? "?" : danglingResult.error}`,
+    );
+    assert(
+        lstatSync(dangling).isSymbolicLink(),
+        "a refused save leaves the dangling symlink alone",
+    );
+
+    section("config: file permissions");
+    const fresh = join(CONFIG_DIR, "fresh-perm.json");
+    rmSync(fresh, { force: true });
+    assertEq(
+        saveConfig({ leaderKey: "ctrl+g" }, fresh).ok,
+        true,
+        "new config saved",
+    );
+    assertEq(
+        statSync(fresh).mode & 0o777,
+        0o600,
+        "a new config file is owner-only — it can hold exec bindings",
+    );
+    chmodSync(fresh, 0o644);
+    assertEq(
+        saveConfig({ leaderKey: "ctrl+h" }, fresh).ok,
+        true,
+        "existing config re-saved",
+    );
+    assertEq(
+        statSync(fresh).mode & 0o777,
+        0o644,
+        "re-saving keeps the mode the file already had",
+    );
+
     rmSync(join(CONFIG_DIR, "save-config-nested"), { recursive: true });
     rmSync(atomicDir, { recursive: true });
 }

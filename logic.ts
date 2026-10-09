@@ -7,10 +7,13 @@
 
 import {
     existsSync,
+    lstatSync,
     mkdirSync,
     readFileSync,
+    realpathSync,
     renameSync,
     rmSync,
+    statSync,
     writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -227,9 +230,27 @@ export function validateLeaderKey(raw: unknown): string | null {
     return null;
 }
 
-/** Positive finite number, or `fallback`. Strings fall back — the wizard parses with Number() first. */
+/**
+ * Largest delay Node's setTimeout can hold. Delays are stored as signed
+ * 32-bit, so a larger value wraps and fires after ~1ms — leader mode would
+ * dismiss on the very next frame.
+ */
+export const MAX_TIMEOUT_MS = 2147483647;
+
+/** True when `raw` is a number Node would wrap as a timer delay. */
+export function overflowsTimer(raw: unknown): boolean {
+    return typeof raw === "number" && Number.isFinite(raw) && raw > MAX_TIMEOUT_MS;
+}
+
+/**
+ * Positive finite number no larger than MAX_TIMEOUT_MS, or `fallback`.
+ * Strings fall back — the wizard parses with Number() first.
+ */
 export function positiveMs(raw: unknown, fallback: number): number {
-    return typeof raw === "number" && Number.isFinite(raw) && raw > 0
+    return typeof raw === "number" &&
+        Number.isFinite(raw) &&
+        raw > 0 &&
+        raw <= MAX_TIMEOUT_MS
         ? raw
         : fallback;
 }
@@ -256,6 +277,12 @@ export function loadConfig(path: string = CONFIG_PATH): ConfigResult {
             parsed.bindings,
         );
         const notes = note ? [note] : [];
+        for (const field of ["leaderTimeoutMs", "sequenceTimeoutMs"] as const) {
+            if (overflowsTimer(parsed[field]))
+                notes.push(
+                    `${field} ${parsed[field]} is past the 32-bit setTimeout limit (${MAX_TIMEOUT_MS}) — using ${DEFAULT_CONFIG[field]}`,
+                );
+        }
         const leaderKeyError = validateLeaderKey(parsed.leaderKey);
         if (parsed.leaderKey !== undefined && leaderKeyError !== null)
             notes.push(
@@ -735,11 +762,52 @@ function readRaw(
     return { ok: true, raw: parsed };
 }
 
-function writeAtomic(path: string, text: string): SaveResult {
-    const tmp = `${path}.${process.pid}.tmp`;
+/**
+ * The file a save should actually replace.
+ *
+ * A dotfile manager (stow, chezmoi) keeps the real config elsewhere and
+ * links to it; renaming over the link would replace it with a regular file
+ * and leave the managed copy stale. Follow the link instead. A link with
+ * nothing behind it is refused rather than silently replaced — that would
+ * create a config the manager never asked for, and the user has to decide
+ * whether the link or its target is wrong.
+ */
+function resolveWriteTarget(
+    path: string,
+): { target: string } | { error: string } {
+    let isLink = false;
     try {
-        writeFileSync(tmp, text);
-        renameSync(tmp, path);
+        isLink = lstatSync(path).isSymbolicLink();
+    } catch {
+        return { target: path }; // nothing there yet — writeAtomic creates it
+    }
+    if (!isLink) return { target: path };
+    try {
+        return { target: realpathSync(path) };
+    } catch {
+        return {
+            error:
+                "config file is a link to a missing file — fix or remove the link first",
+        };
+    }
+}
+
+function writeAtomic(path: string, text: string): SaveResult {
+    const resolved = resolveWriteTarget(path);
+    if ("error" in resolved) return { ok: false, error: resolved.error };
+    const target = resolved.target;
+    // Keep the mode the file already has; a config can hold `exec`
+    // bindings, so anything new starts owner-only rather than at the umask.
+    let mode = 0o600;
+    try {
+        mode = statSync(target).mode & 0o777;
+    } catch {
+        // new file — the 0600 above stands
+    }
+    const tmp = `${target}.${process.pid}.tmp`;
+    try {
+        writeFileSync(tmp, text, { mode });
+        renameSync(tmp, target);
         return { ok: true };
     } catch (err) {
         try {

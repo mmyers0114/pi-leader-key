@@ -23,6 +23,7 @@ import {
     isPrintableKey,
     isProperPrefix,
     loadConfig,
+    MAX_TIMEOUT_MS,
     positiveMs,
     saveBinding,
     saveConfig,
@@ -718,7 +719,7 @@ export async function runSetupWizard(
     const askMs = (title: string, fallback: string, hint: string) =>
         ask(title, fallback, hint, (raw) =>
             positiveMs(Number(raw), -1) === -1
-                ? "enter a positive number of milliseconds"
+                ? `enter a positive number of milliseconds, at most ${MAX_TIMEOUT_MS}`
                 : null,
         );
 
