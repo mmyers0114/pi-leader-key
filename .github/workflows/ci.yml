@@ -1,0 +1,29 @@
+name: CI
+
+# Gates every change to main and every pull request. publish.yml only runs
+# on version tags, so without this nothing checks a change until release.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      # `CI=true` makes the integration suites fail on a missing peer
+      # instead of skipping, so a broken install cannot pass silently.
+      - run: npm ci
+      - run: npm test
+        env:
+          CI: "true"
