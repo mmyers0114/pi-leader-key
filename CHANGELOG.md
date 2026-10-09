@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **CI on every push and pull request.** `.github/workflows/ci.yml` runs `npm test` with `CI=true` on `main` and on PRs; `publish.yml` only ever ran on version tags, so nothing gated a change until release. It runs a matrix over pi `1.0.2` (what the lockfile pins) and `1.1.0` (what the host ships), because the integration suites resolve the real peers and dispatch reaches for pi-tui's private `submitValue()`. `CI=true` makes a missing peer fail instead of skipping, so the matrix cannot pass by testing nothing.
+- **Dispatch extracted from `index.ts` into `dispatch.ts`**, behind an injectable `DispatchDeps`. The command, action, and exec paths had no automated coverage at all; they are now characterized in `__tests__/dispatch.test.ts` (22 cases) and driven against pi's real `CustomEditor` in `__tests__/editor-integration.test.ts`. Like `logic.ts`, it imports nothing from pi.
+- `__tests__/editor-integration.test.ts`: a command binding submitted through the real editor, asserting the exact text delivered to `onSubmit`, the draft restored afterwards, the `onSubmit` fallback when `submitValue()` is missing, and a guard that fails if a future pi drops `submitValue()` outright.
+
+### Fixed
+
+- **Timer values above Node's 32-bit limit no longer make leader mode fire instantly.** `positiveMs()` caps at `2147483647`, the choke point both `loadConfig()` and the setup wizard already go through, and the wizard's rejection now names the maximum.
+- **Config writes no longer replace a symlink with a regular file.** `saveConfig()` resolves the target with `realpathSync` and refuses anything outside the config's real directory, so a symlinked config keeps its link and a symlink pointing at someone else's file is not silently rewritten.
+- **A corrupt or wrongly-shaped config now says so on leader press.** `leaderPressOutcome()` reports "could not be parsed — fix or remove leader-key.json" or "is not a leader-key config …" instead of the misleading "No leader bindings configured", and never routes a broken file into the setup wizard, which must not overwrite a file it could not read.
+- **A runaway `exec` binding no longer grows without bound.** `pi.exec` concatenates stdout into one uncapped string (pi's `dist/core/exec.js`), so `capOutput()` only trimmed what was already buffered — and the call can also stay pending long past the 15 s timeout, because pi waits for the streams to close and never signals grandchildren. The command is now wrapped as `{ cmd; } 2>&1 | head -c 65536; exit ${PIPESTATUS[0]}`, capping memory below the display cap, breaking the pipe once the bytes are in, and keeping the user's exit code.
+
+### Changed
+
+- Config files are written owner-only (`0600`), and an existing config with looser permissions is tightened on the next save.
+- The `index.ts` header no longer claims a blank config is written on first startup. Nothing is written until the setup wizard is confirmed.
+
+### Not changed
+
+- Leader-key case handling, after verification: pi-tui's `parseKeyId` lowercases the whole key id (`dist/keys.js:604`), so a hand-edited `CTRL+Space` registers and matches identically. No normalization needed.
+
 ## [1.4.0] - 2026-10-05
 
 ### Added

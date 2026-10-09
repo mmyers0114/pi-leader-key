@@ -8,11 +8,14 @@
  * submit pipeline) for full slash-command processing.
  *
  * Pure logic (config loading, key matching, command-menu building) lives in
- * logic.ts, which the test suite imports directly.
+ * logic.ts, and executing a binding (draft save and restore, submission,
+ * actions, exec output, reload detection) in dispatch.ts. Both are free of
+ * pi imports and are imported directly by the test suite; index.ts only
+ * wires pi's ctx and pi.exec into them.
  *
- * On first startup (no leader-key.json), a blank default config is written
- * to ~/.pi/agent/leader-key.json — outside the package dir, so it survives
- * updates. The package itself ships no config file.
+ * With no leader-key.json the first leader press opens the setup wizard.
+ * Nothing is written until the user confirms, and the package ships no
+ * config file.
  *
  * /find-commands opens a picker over pi.getCommands() for command-binding
  * discovery; selection echoes the exact invokable string. It also hosts an
@@ -79,9 +82,7 @@ import {
 } from "@earendil-works/pi-tui";
 import {
     buildCommandMenu,
-    capOutput,
     CONFIG_PATH,
-    dispatchPlan,
     focusedEditor,
     isMountedEditor,
     isPrintableKey,
@@ -89,10 +90,15 @@ import {
     loadConfig,
     processKey,
     renderEditor,
-    shouldRestoreDraft,
     type LeaderConfig,
     type MountedEditor,
 } from "./logic.ts";
+import {
+    dispatchBinding,
+    isReloadBinding,
+    leaderPressOutcome,
+    type DispatchDeps,
+} from "./dispatch.ts";
 import {
     makeCommandPicker,
     runBindingWizard,
@@ -158,41 +164,6 @@ export default function (pi: ExtensionAPI) {
                     .join(", ")} — check leader-key.json.`,
                 "warning",
             );
-    }
-
-    /**
-     * Submit a command binding through the editor's own submit path.
-     *
-     * pi-tui keeps submitValue() private, but the Enter handler calls it
-     * and it is what a typed command needs: it cancels autocomplete, exits
-     * history browsing, and — unlike setText — leaves no undo entry
-     * holding the synthetic command text. Going through handleInput("\r")
-     * instead would depend on the user not having remapped
-     * `tui.input.submit`. onSubmit is wrapped for the duration of the call
-     * so the real handler's return value stays awaitable; if a future pi
-     * drops submitValue, fall back to calling onSubmit directly.
-     */
-    function submitViaEditor(
-        editor: MountedEditor | null,
-    ): Promise<void> {
-        if (!editor) return Promise.resolve();
-        let pending: void | Promise<void> = undefined;
-        const original = editor.onSubmit;
-        editor.onSubmit = (value) => {
-            pending = original?.(value);
-        };
-        try {
-            // SAFETY: pi-tui marks submitValue private in its .d.ts but the
-            // method exists at runtime (the Enter handler calls it), and
-            // the typeof guard below falls back if a future pi drops it.
-            const submit = (editor as unknown as { submitValue?: () => void })
-                .submitValue;
-            if (typeof submit === "function") submit.call(editor);
-            else original?.(editor.getText());
-        } finally {
-            editor.onSubmit = original;
-        }
-        return Promise.resolve(pending).then(() => undefined);
     }
 
     // ------------------------------------------------------------------
@@ -327,98 +298,34 @@ export default function (pi: ExtensionAPI) {
     }
 
     // ------------------------------------------------------------------
-    // Dispatch helper
+    // Dispatch wiring
     // ------------------------------------------------------------------
 
-    async function dispatchBinding(
-        ctx: ExtensionContext,
-        current: LeaderConfig,
-        key: string,
-    ): Promise<void> {
-        const binding = current.bindings[key];
-        if (!binding) return;
-
-        const plan = dispatchPlan(binding);
-        if (plan.kind === "command") {
-            // Submitting means driving the mounted editor's own handler,
-            // which needs the instance the overlay captured. With no editor
-            // focused there is nothing to submit into, and silently typing
-            // the command somewhere else would be worse than saying so.
-            if (!activeEditor) {
-                ctx.ui.notify(
-                    "That leader command needs the editor focused.",
-                    "warning",
-                );
-                return;
-            }
-            const submitted = plan.text;
-            // Snapshot through the UI accessor, not activeEditor.getText():
-            // a large paste is stored collapsed as a marker, getText()
-            // returns that marker, and getEditorText() expands it.
-            // Restoring the marker after submitValue() wiped the paste map
-            // would lose the pasted text for good.
-            const draft = ctx.ui.getEditorText();
-            // ctx.ui writes through pi's own editor instance
-            // (setEditorText is `this.editor.setText`). That is the editor
-            // the capture overlay focused on in practice — the leader
-            // shortcut is routed from the editor's own handler — so the
-            // draft and the submission below land on the same instance.
-            ctx.ui.setEditorText(submitted);
-            await submitViaEditor(activeEditor);
-            // Give the draft back unless the command left new text behind.
-            if (shouldRestoreDraft(ctx.ui.getEditorText(), submitted)) {
-                ctx.ui.setEditorText(draft);
-            }
-            return;
-        }
-
-        if (plan.kind === "action") {
-            switch (plan.action) {
-                case "compact":
-                    ctx.compact({
-                        onComplete: () =>
-                            ctx.ui.notify("Compaction complete", "info"),
-                        onError: (err: Error) =>
-                            ctx.ui.notify(
-                                `Compaction failed: ${err.message}`,
-                                "error",
-                            ),
-                    });
-                    break;
-                case "shutdown":
-                    ctx.shutdown();
-                    break;
-                case "clearEditor":
-                    ctx.ui.setEditorText("");
-                    break;
-                default:
-                    ctx.ui.notify(
-                        `Unknown action for "${key}" — check leader-key.json.`,
-                        "warning",
-                    );
-                    break;
-            }
-        } else if (plan.kind === "exec") {
-            const r = await pi.exec("bash", ["-c", plan.cmd], {
-                timeout: 15000,
-            });
-            // Cap what reaches the TUI — `cat huge.log` shouldn't flood it
-            // — and strip control sequences so a command can't move the
-            // cursor or rewrite the terminal title through its output.
-            const failed = r.code !== 0;
-            const body = capOutput(failed && r.stderr ? r.stderr : r.stdout);
-            ctx.ui.notify(
-                failed
-                    ? `[exit ${r.code}] ${body || "no output"}`
-                    : body || `[exit ${r.code}]`,
-                "info",
-            );
-        } else {
-            ctx.ui.notify(
-                `Binding "${key}" isn't a command, action, or shell command — check leader-key.json.`,
-                "warning",
-            );
-        }
+    /**
+     * Hand pi's ctx and pi.exec to the extracted dispatch module. It only
+     * executes a plan; deciding what a binding means is logic.ts's job, and
+     * running it is dispatch.ts's — this is the seam between them.
+     */
+    function dispatchDeps(ctx: ExtensionContext): DispatchDeps {
+        return {
+            editor: activeEditor,
+            notify: (message, kind) => ctx.ui.notify(message, kind),
+            getEditorText: () => ctx.ui.getEditorText(),
+            setEditorText: (text) => ctx.ui.setEditorText(text),
+            compact: () =>
+                ctx.compact({
+                    onComplete: () =>
+                        ctx.ui.notify("Compaction complete", "info"),
+                    onError: (err: Error) =>
+                        ctx.ui.notify(
+                            `Compaction failed: ${err.message}`,
+                            "error",
+                        ),
+                }),
+            shutdown: () => ctx.shutdown(),
+            exec: (cmd, timeoutMs) =>
+                pi.exec("bash", ["-c", cmd], { timeout: timeoutMs }),
+        };
     }
 
     // ------------------------------------------------------------------
@@ -569,19 +476,22 @@ export default function (pi: ExtensionAPI) {
 
             capturing = true;
             try {
-                const { config: current, error } = loadConfig();
-                // No config file yet: first run in this install, so set
-                // the config up before anything can dispatch. `config` is
-                // what pi registered the shortcut with, so it is the key
-                // the user can actually press right now.
-                if (error === "missing") {
+                const loaded = loadConfig();
+                // Deciding what a press does with a missing, broken, or
+                // merely empty config lives in dispatch.ts, so the rules
+                // are testable without a TUI. `config` is what pi
+                // registered the shortcut with, so it is the key the user
+                // can actually press right now.
+                const outcome = leaderPressOutcome(loaded);
+                if (outcome.kind === "wizard") {
                     await runSetupWizard(ctx, config.leaderKey);
                     return;
                 }
-                if (Object.keys(current.bindings).length === 0) {
-                    ctx.ui.notify("No leader bindings configured.", "warning");
+                if (outcome.kind === "warn") {
+                    ctx.ui.notify(outcome.message, "warning");
                     return;
                 }
+                const current = loaded.config;
 
                 // The overlay captures the mounted editor and renders it
                 // grayed; when there is no editor to gray it puts up the
@@ -593,7 +503,11 @@ export default function (pi: ExtensionAPI) {
                 try {
                     result = await runEffectCapture(ctx, current);
                     if (typeof result === "string")
-                        await dispatchBinding(ctx, current, result);
+                        await dispatchBinding(
+                            dispatchDeps(ctx),
+                            result,
+                            current.bindings[result],
+                        );
                 } finally {
                     // Drop the editor reference and the indicator: the next
                     // press recaptures both, and a throw in the overlay or
@@ -606,14 +520,11 @@ export default function (pi: ExtensionAPI) {
                     // being torn down as it goes, so there is nothing to
                     // clear, and touching `ctx` here would only raise an
                     // error toast over the reload it was clearing for.
-                    const bound =
+                    const reloading = isReloadBinding(
                         typeof result === "string"
                             ? current.bindings[result]
-                            : undefined;
-                    const reloading =
-                        bound !== undefined &&
-                        "command" in bound &&
-                        bound.command === "/reload";
+                            : undefined,
+                    );
                     if (!reloading) ctx.ui.setStatus("leader", undefined);
                 }
             } finally {

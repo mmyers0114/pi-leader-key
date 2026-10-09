@@ -18,6 +18,7 @@
     "files": [
         "index.ts",
         "logic.ts",
+        "dispatch.ts",
         "wizard.ts",
         "CHANGELOG.md",
         "AGENTS.md"
